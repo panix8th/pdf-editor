@@ -1,7 +1,7 @@
 {
   "name": "pdf-editor",
   "productName": "PDF Editor",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "A lightweight, offline desktop PDF editor - view, edit, annotate, sign and save PDFs.",
   "main": "src/main/main.js",
   "author": "PDF Editor",

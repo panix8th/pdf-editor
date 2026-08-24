@@ -19,10 +19,17 @@ function rgbToHex(r, g, b) {
   return '#' + [r, g, b].map((v) => Math.max(0, Math.min(255, v)).toString(16).padStart(2, '0')).join('');
 }
 
-/** Approximates the original run's text/background color by sampling the
- * already-rendered page canvas, since we don't have the PDF's actual paint
- * operators for this text - just its position. */
-function sampleRunColors(canvas, screenRect) {
+/** Approximates the original run's background color by sampling the
+ * already-rendered page canvas just outside the run (since we don't have
+ * the PDF's actual paint operators - just this text's position), so the
+ * cover rectangle blends in. Text color defaults to black rather than
+ * also being sampled: at typical body-text sizes a run only spans a
+ * handful of screen pixels, so picking a single "darkest pixel" from
+ * anti-aliased glyph edges is noisy and can land on a stray tinted pixel
+ * instead of the glyph's true color. Black is right for the vast
+ * majority of real documents, and it's a one-click fix in the properties
+ * panel otherwise. */
+function sampleBackgroundColor(canvas, screenRect) {
   try {
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
     const bgPoints = [
@@ -36,29 +43,9 @@ function sampleRunColors(canvas, screenRect) {
       const d = ctx.getImageData(x, y, 1, 1).data;
       br += d[0]; bg += d[1]; bb += d[2]; bn++;
     }
-    const bgColor = rgbToHex(br / bn, bg / bn, bb / bn);
-
-    let darkest = null;
-    let darkestLuma = Infinity;
-    const cols = 6, rows = 3;
-    for (let i = 0; i < cols; i++) {
-      for (let j = 0; j < rows; j++) {
-        const px = Math.round(screenRect.x + ((i + 0.5) / cols) * screenRect.w);
-        const py = Math.round(screenRect.y + ((j + 0.5) / rows) * screenRect.h);
-        const x = Math.max(0, Math.min(canvas.width - 1, px));
-        const y = Math.max(0, Math.min(canvas.height - 1, py));
-        const d = ctx.getImageData(x, y, 1, 1).data;
-        const luma = 0.299 * d[0] + 0.587 * d[1] + 0.114 * d[2];
-        if (luma < darkestLuma) {
-          darkestLuma = luma;
-          darkest = d;
-        }
-      }
-    }
-    const fgColor = darkest ? rgbToHex(darkest[0], darkest[1], darkest[2]) : '#000000';
-    return { bg: bgColor, fg: fgColor };
+    return rgbToHex(br / bn, bg / bn, bb / bn);
   } catch {
-    return { bg: '#ffffff', fg: '#000000' };
+    return '#ffffff';
   }
 }
 
@@ -106,7 +93,7 @@ export default function AnnotationLayer({ doc, page, pageIndex, pdfPage, scale, 
     if (tool !== 'select') return;
     const screenRect = storageRectToScreen(pdfPage, liveViewport, run.rect);
     const canvas = overlayRef.current?.parentElement?.querySelector('canvas');
-    const colors = canvas ? sampleRunColors(canvas, screenRect) : { bg: '#ffffff', fg: '#000000' };
+    const bgColor = canvas ? sampleBackgroundColor(canvas, screenRect) : '#ffffff';
     const pad = 1;
     const box = { x: run.rect.x - pad, y: run.rect.y - pad, w: run.rect.w + pad * 2, h: run.rect.h + pad * 2 };
     const id = uuid();
@@ -118,12 +105,12 @@ export default function AnnotationLayer({ doc, page, pageIndex, pdfPage, scale, 
       fontFamily: guessStandardFamily(run.fontFamilyHint),
       fontId: null,
       fontSize: run.fontSize,
-      color: colors.fg,
+      color: '#000000',
       bold: false,
       italic: false,
       align: 'left',
       coverRect: box,
-      coverColor: colors.bg
+      coverColor: bgColor
     });
     setEditingId(id);
   };
@@ -349,14 +336,14 @@ export default function AnnotationLayer({ doc, page, pageIndex, pdfPage, scale, 
       {(draft?.tool === 'line' || draft?.tool === 'arrow' || draft?.tool === 'pen') && (
         <svg width={pxW} height={pxH} style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
           {(draft.tool === 'line' || draft.tool === 'arrow') && (
-            <line x1={draft.startX} y1={draft.startY} x2={draft.x} y2={draft.y} stroke={toolOptions.strokeColor} strokeWidth={toolOptions.strokeWidth} strokeDasharray="4 3" />
+            <line x1={draft.startX} y1={draft.startY} x2={draft.x} y2={draft.y} stroke={toolOptions.strokeColor} strokeWidth={toolOptions.strokeWidth * liveViewport.scale} strokeDasharray="4 3" />
           )}
           {draft.tool === 'pen' && (
             <polyline
               points={draft.points.map((p) => `${p.x},${p.y}`).join(' ')}
               fill="none"
               stroke={toolOptions.strokeColor}
-              strokeWidth={toolOptions.strokeWidth}
+              strokeWidth={toolOptions.strokeWidth * liveViewport.scale}
               strokeLinecap="round"
               strokeLinejoin="round"
             />
@@ -398,6 +385,14 @@ export default function AnnotationLayer({ doc, page, pageIndex, pdfPage, scale, 
 
 function BoxShape({ ann, pdfPage, liveViewport, selected, editing, onStartEdit, onStopEdit, onSelect, onChange, interactive }) {
   const screenRect = storageRectToScreen(pdfPage, liveViewport, ann);
+  // Font sizes/stroke widths on an annotation are stored in real PDF
+  // points (that's what gets baked into the saved file, always correct
+  // regardless of zoom). The screen box itself is already zoom-scaled via
+  // storageRectToScreen above, so anything measured in points has to be
+  // scaled the same way for the live preview to match what gets saved -
+  // otherwise text/borders only look right at whatever zoom level happens
+  // to make points and CSS pixels line up 1:1.
+  const zoomScale = liveViewport.scale;
 
   const handleDragStop = (e, d) => {
     const newStorage = screenRectToStorage(pdfPage, liveViewport, { x: d.x, y: d.y, w: screenRect.w, h: screenRect.h });
@@ -422,7 +417,8 @@ function BoxShape({ ann, pdfPage, liveViewport, selected, editing, onStartEdit, 
           fontFamily: ann.fontFamily,
           fontWeight: ann.bold ? 'bold' : 'normal',
           fontStyle: ann.italic ? 'italic' : 'normal',
-          fontSize: ann.fontSize,
+          fontSize: ann.fontSize * zoomScale,
+          lineHeight: 1.25,
           color: ann.color,
           textAlign: ann.align,
           border: '1px solid var(--accent)',
@@ -443,7 +439,8 @@ function BoxShape({ ann, pdfPage, liveViewport, selected, editing, onStartEdit, 
           fontFamily: ann.fontFamily,
           fontWeight: ann.bold ? 'bold' : 'normal',
           fontStyle: ann.italic ? 'italic' : 'normal',
-          fontSize: ann.fontSize,
+          fontSize: ann.fontSize * zoomScale,
+          lineHeight: 1.25,
           color: ann.color,
           textAlign: ann.align,
           whiteSpace: 'pre-wrap',
@@ -467,7 +464,7 @@ function BoxShape({ ann, pdfPage, liveViewport, selected, editing, onStartEdit, 
         style={{
           width: '100%',
           height: '100%',
-          border: `${ann.strokeWidth}px solid ${ann.strokeColor}`,
+          border: `${Math.max(1, ann.strokeWidth * zoomScale)}px solid ${ann.strokeColor}`,
           background: ann.fillColor ? hexToRgba(ann.fillColor, ann.fillOpacity ?? 0.3) : 'transparent'
         }}
       />
@@ -519,6 +516,7 @@ function BoxShape({ ann, pdfPage, liveViewport, selected, editing, onStartEdit, 
 }
 
 function StrokeShape({ ann, pdfPage, liveViewport, selected, onSelect, onChange, interactive }) {
+  const zoomScale = liveViewport.scale; // see BoxShape - strokeWidth is stored in PDF points
   if (ann.type === 'pen') {
     const screenPts = ann.points.map((p) => storagePointToScreen(pdfPage, liveViewport, p.x, p.y));
     const pointsStr = screenPts.map(([x, y]) => `${x},${y}`).join(' ');
@@ -545,7 +543,7 @@ function StrokeShape({ ann, pdfPage, liveViewport, selected, onSelect, onChange,
         points={pointsStr}
         fill="none"
         stroke={ann.strokeColor}
-        strokeWidth={selected ? ann.strokeWidth + 2 : ann.strokeWidth}
+        strokeWidth={(ann.strokeWidth + (selected ? 2 : 0)) * zoomScale}
         strokeLinecap="round"
         strokeLinejoin="round"
         style={{ pointerEvents: interactive ? 'stroke' : 'none', cursor: 'move' }}
@@ -600,8 +598,8 @@ function StrokeShape({ ann, pdfPage, liveViewport, selected, onSelect, onChange,
 
   return (
     <g>
-      <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="transparent" strokeWidth={Math.max(14, ann.strokeWidth + 10)} style={{ pointerEvents: interactive ? 'stroke' : 'none', cursor: 'move' }} onMouseDown={onLineDrag} />
-      <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={ann.strokeColor} strokeWidth={selected ? ann.strokeWidth + 1.5 : ann.strokeWidth} markerEnd={ann.type === 'arrow' ? 'url(#arrowhead)' : undefined} style={{ pointerEvents: 'none' }} />
+      <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="transparent" strokeWidth={Math.max(14, ann.strokeWidth * zoomScale + 10)} style={{ pointerEvents: interactive ? 'stroke' : 'none', cursor: 'move' }} onMouseDown={onLineDrag} />
+      <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={ann.strokeColor} strokeWidth={(ann.strokeWidth + (selected ? 1.5 : 0)) * zoomScale} markerEnd={ann.type === 'arrow' ? 'url(#arrowhead)' : undefined} style={{ pointerEvents: 'none' }} />
       {ann.type === 'arrow' && (
         <defs>
           <marker id="arrowhead" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">

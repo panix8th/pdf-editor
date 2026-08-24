@@ -50,6 +50,11 @@ body {
   font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
   font-size: 13px;
   overflow: hidden;
+  /* Grayscale (not subpixel/LCD) text antialiasing - subpixel AA can show
+     a visible RGB fringe on small text, especially the tiny font sizes
+     used for on-page annotation editing. */
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 button,
