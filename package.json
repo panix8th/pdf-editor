@@ -49,6 +49,7 @@
     "appId": "com.pdfeditor.app",
     "productName": "PDF Editor",
     "asar": true,
+    "npmRebuild": false,
     "files": [
       "dist/**/*",
       "src/main/**/*",
