@@ -19,6 +19,10 @@ import { getCachedResolvedFontId, cacheResolvedFontId } from '../state/docResour
 const BOX_TOOLS = new Set(['rect', 'highlight', 'redact']);
 const LINE_TOOLS = new Set(['line', 'arrow']);
 
+function rectsIntersect(a, b) {
+  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+}
+
 function rgbToHex(r, g, b) {
   return '#' + [r, g, b].map((v) => Math.max(0, Math.min(255, v)).toString(16).padStart(2, '0')).join('');
 }
@@ -67,8 +71,15 @@ export default function AnnotationLayer({ doc, page, pageIndex, pdfPage, scale, 
   const tool = doc.tool;
   const toolOptions = doc.toolOptions;
   const [draft, setDraft] = useState(null);
+  const [marquee, setMarquee] = useState(null);
   const [editingId, setEditingId] = useState(null);
   const [textRuns, setTextRuns] = useState([]);
+  // A completed marquee drag can release the mouse directly on top of a
+  // text run's hit-target, which fires that element's own `click` (the
+  // browser targets `click` at whatever's under the pointer at mouseup,
+  // regardless of where the drag started) - without this guard that would
+  // create a second, single-run annotation on top of the merged one.
+  const suppressNextRunClick = useRef(false);
 
   const liveViewport = useMemo(() => pdfPage.getViewport({ scale, rotation }), [pdfPage, scale, rotation]);
 
@@ -93,29 +104,59 @@ export default function AnnotationLayer({ doc, page, pageIndex, pdfPage, scale, 
     };
   }, [pdfPage]);
 
-  const onTextRunClick = (run) => (e) => {
-    e.stopPropagation();
-    if (tool !== 'select') return;
-    const screenRect = storageRectToScreen(pdfPage, liveViewport, run.rect);
+  // Joins multiple selected text runs into one block of text, in their
+  // original stream order (already close enough to reading order for the
+  // common case), inserting a newline between runs that sit on visually
+  // different lines and a space between runs that share a line.
+  const joinRunsText = (runs) => {
+    let text = '';
+    let prevY = null;
+    let prevH = null;
+    for (const run of runs) {
+      if (prevY !== null) {
+        const threshold = (prevH || run.rect.h) * 0.6;
+        text += Math.abs(run.rect.y - prevY) > threshold ? '\n' : ' ';
+      }
+      text += run.str;
+      prevY = run.rect.y;
+      prevH = run.rect.h;
+    }
+    return text;
+  };
+
+  // Creates one editable text annotation covering one or more original PDF
+  // text runs (merged when more than one - see the marquee-select flow
+  // below), auto-detecting font/color/size from the first run and
+  // upgrading to the real font in the background exactly like a
+  // single-run click.
+  const createEditableAnnotationFromRuns = (runs) => {
+    const first = runs[0];
+    const minX = Math.min(...runs.map((r) => r.rect.x));
+    const minY = Math.min(...runs.map((r) => r.rect.y));
+    const maxX = Math.max(...runs.map((r) => r.rect.x + r.rect.w));
+    const maxY = Math.max(...runs.map((r) => r.rect.y + r.rect.h));
+    const pad = 1;
+    const box = { x: minX - pad, y: minY - pad, w: maxX - minX + pad * 2, h: maxY - minY + pad * 2 };
+    const text = runs.length > 1 ? joinRunsText(runs) : first.str;
+
+    const screenRect = storageRectToScreen(pdfPage, liveViewport, { x: minX, y: minY, w: maxX - minX, h: maxY - minY });
     const canvas = overlayRef.current?.parentElement?.querySelector('canvas');
     const bgColor = canvas ? sampleBackgroundColor(canvas, screenRect) : '#ffffff';
-    const pad = 1;
-    const box = { x: run.rect.x - pad, y: run.rect.y - pad, w: run.rect.w + pad * 2, h: run.rect.h + pad * 2 };
     const id = uuid();
     // Create with an instant, offline guess so the editor opens immediately
     // - never block on the network - then silently upgrade to the real
-    // font underneath the user if/once a Google Fonts match comes back.
+    // font underneath the user if/once a match comes back.
     addAnnotation(doc.id, page.key, {
       id,
       type: 'text',
       ...box,
-      text: run.str,
-      fontFamily: guessStandardFamily(run.fontFamilyHint),
+      text,
+      fontFamily: guessStandardFamily(first.fontFamilyHint),
       fontId: null,
-      fontSize: run.fontSize,
-      color: run.color || '#000000',
-      bold: run.bold,
-      italic: run.italic,
+      fontSize: first.fontSize,
+      color: first.color || '#000000',
+      bold: first.bold,
+      italic: first.italic,
       align: 'left',
       coverRect: box,
       coverColor: bgColor
@@ -128,7 +169,7 @@ export default function AnnotationLayer({ doc, page, pageIndex, pdfPage, scale, 
     // that, Google Fonts (exact name, then a metric-compatible
     // substitute). Never blocks the edit either way.
     (async () => {
-      const sysCacheKey = `sys:${run.realFontName || run.fontFamilyHint}:${run.bold}:${run.italic}`;
+      const sysCacheKey = `sys:${first.realFontName || first.fontFamilyHint}:${first.bold}:${first.italic}`;
       const cachedSysFontId = getCachedResolvedFontId(doc.id, sysCacheKey);
       if (cachedSysFontId) {
         const cachedName = doc.customFontsList.find((f) => f.id === cachedSysFontId)?.name;
@@ -137,7 +178,7 @@ export default function AnnotationLayer({ doc, page, pageIndex, pdfPage, scale, 
           return;
         }
       }
-      const sysMatch = await findAndLoadSystemFont(run.realFontName, run.fontFamilyHint, { bold: run.bold, italic: run.italic }).catch(() => null);
+      const sysMatch = await findAndLoadSystemFont(first.realFontName, first.fontFamilyHint, { bold: first.bold, italic: first.italic }).catch(() => null);
       if (sysMatch) {
         const fontId = `sysfont-${sysMatch.family}-${Date.now()}`;
         registerCustomFont(doc.id, fontId, sysMatch.bytes, sysMatch.family);
@@ -146,13 +187,23 @@ export default function AnnotationLayer({ doc, page, pageIndex, pdfPage, scale, 
         return;
       }
 
-      const candidates = resolveGoogleFontCandidates(run.realFontName, run.fontFamilyHint);
+      const candidates = resolveGoogleFontCandidates(first.realFontName, first.fontFamilyHint);
       if (candidates.length === 0) return;
-      const match = await resolveAndCacheGoogleFont(doc.id, candidates, { bold: run.bold, italic: run.italic, registerCustomFont }).catch(() => null);
+      const match = await resolveAndCacheGoogleFont(doc.id, candidates, { bold: first.bold, italic: first.italic, registerCustomFont }).catch(() => null);
       if (match) updateAnnotation(doc.id, page.key, id, { fontFamily: match.fontFamily, fontId: match.fontId }, { record: false });
       // Otherwise offline, no match anywhere, or a request timed out - the
       // annotation already has a sensible offline fallback font.
     })();
+  };
+
+  const onTextRunClick = (run) => (e) => {
+    e.stopPropagation();
+    if (tool !== 'select') return;
+    if (suppressNextRunClick.current) {
+      suppressNextRunClick.current = false;
+      return;
+    }
+    createEditableAnnotationFromRuns([run]);
   };
 
   const commitNewShape = useCallback(
@@ -168,10 +219,44 @@ export default function AnnotationLayer({ doc, page, pageIndex, pdfPage, scale, 
   const onOverlayMouseDown = (e) => {
     if (tool === 'select') {
       // Only the select tool cares about "did this click land on an empty
-      // part of the page" (to deselect) - existing objects handle their
-      // own clicks and stop this from firing for them.
+      // part of the page" - existing objects handle their own clicks and
+      // stop this from firing for them.
       if (e.target !== overlayRef.current) return;
-      selectObject(doc.id, page.key, null);
+      const { x: startX, y: startY } = getOffset(e);
+      let dragged = false;
+      setMarquee({ startX, startY, x: startX, y: startY });
+
+      const onMove = (ev) => {
+        const { x, y } = getOffset(ev);
+        if (Math.abs(x - startX) > 3 || Math.abs(y - startY) > 3) dragged = true;
+        setMarquee({ startX, startY, x, y });
+      };
+      const onUp = (ev) => {
+        window.removeEventListener('mousemove', onMove);
+        window.removeEventListener('mouseup', onUp);
+        setMarquee(null);
+        const { x: endX, y: endY } = getOffset(ev);
+
+        if (!dragged) {
+          // A plain click on empty space: just deselect.
+          selectObject(doc.id, page.key, null);
+          return;
+        }
+
+        // The mouse released mid-drag may land on a text run's own
+        // hit-target, which would otherwise fire its `click` handler too.
+        suppressNextRunClick.current = true;
+
+        const screenSel = { x: Math.min(startX, endX), y: Math.min(startY, endY), w: Math.abs(endX - startX), h: Math.abs(endY - startY) };
+        const storageSel = screenRectToStorage(pdfPage, liveViewport, screenSel);
+        // .filter() preserves textRuns' original stream order regardless of
+        // drag direction, so multi-line merges always read correctly.
+        const hit = textRuns.filter((run) => rectsIntersect(run.rect, storageSel));
+        if (hit.length === 0) return;
+        createEditableAnnotationFromRuns(hit);
+      };
+      window.addEventListener('mousemove', onMove);
+      window.addEventListener('mouseup', onUp);
       return;
     }
     // Any other (drawing) tool should start drawing at this point even if
@@ -401,6 +486,21 @@ export default function AnnotationLayer({ doc, page, pageIndex, pdfPage, scale, 
             height: Math.abs(draft.y - draft.startY),
             background: draft.tool === 'redact' ? 'rgba(120,0,0,0.45)' : draft.tool === 'highlight' ? 'rgba(255,224,102,0.45)' : 'transparent',
             border: `2px dashed ${toolOptions.strokeColor}`,
+            pointerEvents: 'none'
+          }}
+        />
+      )}
+
+      {marquee && (
+        <div
+          style={{
+            position: 'absolute',
+            left: Math.min(marquee.startX, marquee.x),
+            top: Math.min(marquee.startY, marquee.y),
+            width: Math.abs(marquee.x - marquee.startX),
+            height: Math.abs(marquee.y - marquee.startY),
+            background: 'rgba(79,140,255,0.12)',
+            border: '1px solid var(--accent)',
             pointerEvents: 'none'
           }}
         />

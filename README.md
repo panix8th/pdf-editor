@@ -22,7 +22,12 @@ Fonts.
   rather than falling back to a generic substitute. The original run is
   covered with its sampled background color and the edit drawn on top -
   PDF has no portable way to rewrite a content stream in place, so this is
-  the same approach every lightweight editor uses. Plus new text boxes
+  the same approach every lightweight editor uses. When text is split
+  across several runs (e.g. an address block, where each line is a
+  separate run), click-and-drag with the Select tool to draw a marquee
+  over all of them at once - they merge into a single editable text box
+  instead of having to click and edit each line one by one; a plain click
+  (no drag) still edits a single run as before. Plus new text boxes
   (font family/size/color/bold/italic/alignment, standard fonts, any font
   installed on your PC via the Local Font Access picker, any font by name
   from Google Fonts, or a loaded `.ttf`/`.otf`), images, rectangles, lines, arrows,
