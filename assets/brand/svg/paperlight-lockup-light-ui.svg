@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="228" height="40" viewBox="0 0 228 40" fill="none" role="img" aria-label="Paperlight">
+  <g transform="translate(0 3) scale(0.53)">
+    <rect x="14" y="10" width="9" height="44" rx="4.5" fill="#6B43D6"></rect>
+    <path d="M23 14.5h11a13 13 0 010 26H23" stroke="#6B43D6" stroke-width="9" stroke-linecap="round" fill="none"></path>
+  </g>
+  <text x="44" y="28" font-family="Manrope, 'Segoe UI Variable Display', 'Segoe UI', sans-serif" font-size="26" font-weight="700" letter-spacing="-0.78" fill="#201E2A">Paper<tspan fill="#6B43D6">light</tspan></text>
+</svg>

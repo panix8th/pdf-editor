@@ -21,6 +21,20 @@ contextBridge.exposeInMainWorld('pdfEditor', {
 
   getAppVersion: () => ipcRenderer.invoke('app:getVersion'),
 
+  // Frame:false means the renderer draws its own title bar, so it needs
+  // the window-management calls a native frame would normally provide.
+  windowControls: {
+    minimize: () => ipcRenderer.invoke('window:minimize'),
+    maximizeToggle: () => ipcRenderer.invoke('window:maximizeToggle'),
+    close: () => ipcRenderer.invoke('window:close'),
+    isMaximized: () => ipcRenderer.invoke('window:isMaximized'),
+    onMaximizedChange: (callback) => {
+      const listener = (_evt, isMaximized) => callback(isMaximized);
+      ipcRenderer.on('window:maximizedChange', listener);
+      return () => ipcRenderer.removeListener('window:maximizedChange', listener);
+    }
+  },
+
   // The one deliberate exception to this app's offline-by-default design:
   // fetches a real font file from Google Fonts (main process only, never
   // exposed to the renderer's own network stack) so an edited run of
@@ -31,11 +45,6 @@ contextBridge.exposeInMainWorld('pdfEditor', {
   // can read it (and files referenced relative to it) via IPC.
   getPathForFile: (file) => webUtils.getPathForFile(file),
 
-  onMenuAction: (callback) => {
-    const listener = (_evt, payload) => callback(payload);
-    ipcRenderer.on('menu:action', listener);
-    return () => ipcRenderer.removeListener('menu:action', listener);
-  },
   onFileOpenedExternally: (callback) => {
     const listener = (_evt, payload) => callback(payload);
     ipcRenderer.on('file:openedExternally', listener);

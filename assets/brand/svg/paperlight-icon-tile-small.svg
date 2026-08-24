@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" fill="none" role="img" aria-label="Paperlight app icon">
   <rect width="64" height="64" rx="14.5" fill="#6B43D6"></rect>
-  <rect x="14" y="10" width="9" height="44" rx="4.5" fill="#FFFFFF"></rect>
-  <path d="M23 14.5h11a13 13 0 010 26H23" stroke="#FFFFFF" stroke-width="9" stroke-linecap="round" fill="none"></path>
+  <rect x="14" y="10" width="10" height="44" rx="5" fill="#FFFFFF"></rect>
+  <path d="M24 15h10a13 13 0 010 26H24" stroke="#FFFFFF" stroke-width="10" stroke-linecap="round" fill="none"></path>
 </svg>

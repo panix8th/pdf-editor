@@ -3,7 +3,6 @@
 const { app, BrowserWindow, dialog, ipcMain, Menu, session } = require('electron');
 const path = require('path');
 const fs = require('fs/promises');
-const { buildMenu } = require('./menu');
 const { signWithP12, verifySignatures } = require('./signing');
 const { fetchGoogleFont } = require('./googleFonts');
 
@@ -18,12 +17,18 @@ let mainWindow = null;
 
 function createWindow() {
   mainWindow = new BrowserWindow({
+    title: 'Paperlight',
     width: 1400,
     height: 900,
-    minWidth: 900,
-    minHeight: 600,
-    backgroundColor: '#1e1f22',
+    minWidth: 1024,
+    minHeight: 640,
+    backgroundColor: '#0f0e14',
     icon: path.join(__dirname, '..', '..', 'build', 'icon.png'),
+    // Frameless: the renderer draws its own title bar (icon, document tabs,
+    // minimize/maximize/close) to match the design. Resizing from the
+    // window edges still works automatically - Electron/Chromium provide
+    // that for frame:false windows on Windows without extra code.
+    frame: false,
     webPreferences: {
       preload: path.join(__dirname, '..', 'preload', 'preload.js'),
       contextIsolation: true,
@@ -33,7 +38,17 @@ function createWindow() {
     }
   });
 
-  Menu.setApplicationMenu(buildMenu(mainWindow));
+  // No native menu: frame:false hides it anyway, and Electron's menu
+  // accelerators (Ctrl+O, Ctrl+S, ...) turn out not to reliably fire once
+  // the bar itself is hidden (confirmed empirically, not assumed) - so
+  // MenuBar.jsx draws the visible menu and App.jsx's own keydown listener
+  // is the accelerator source instead. Explicit null also avoids Windows'
+  // Alt-key menu-reveal quirk that can otherwise linger on a frameless
+  // window with a menu still technically set.
+  Menu.setApplicationMenu(null);
+
+  mainWindow.on('maximize', () => mainWindow.webContents.send('window:maximizedChange', true));
+  mainWindow.on('unmaximize', () => mainWindow.webContents.send('window:maximizedChange', false));
 
   if (isDev) {
     mainWindow.loadURL('http://localhost:5173');
@@ -104,6 +119,19 @@ if (!gotLock) {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
 }
+
+// ---------------------------------------------------------------------------
+// IPC: custom title bar window controls (frame:false has no native ones)
+// ---------------------------------------------------------------------------
+
+ipcMain.handle('window:minimize', () => mainWindow?.minimize());
+ipcMain.handle('window:maximizeToggle', () => {
+  if (!mainWindow) return;
+  if (mainWindow.isMaximized()) mainWindow.unmaximize();
+  else mainWindow.maximize();
+});
+ipcMain.handle('window:close', () => mainWindow?.close());
+ipcMain.handle('window:isMaximized', () => !!mainWindow?.isMaximized());
 
 // ---------------------------------------------------------------------------
 // IPC: file dialogs & filesystem

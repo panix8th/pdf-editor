@@ -1,10 +1,10 @@
 {
-  "name": "pdf-editor",
-  "productName": "PDF Editor",
-  "version": "1.0.7",
-  "description": "A lightweight, offline desktop PDF editor - view, edit, annotate, sign and save PDFs.",
+  "name": "paperlight",
+  "productName": "Paperlight",
+  "version": "1.1.0",
+  "description": "Paperlight - a lightweight, offline desktop PDF editor: view, edit, annotate, sign and save PDFs.",
   "main": "src/main/main.js",
-  "author": "PDF Editor",
+  "author": "Paperlight",
   "license": "MIT",
   "private": true,
   "type": "commonjs",
@@ -46,8 +46,8 @@
     "wait-on": "^7.2.0"
   },
   "build": {
-    "appId": "com.pdfeditor.app",
-    "productName": "PDF Editor",
+    "appId": "com.paperlight.app",
+    "productName": "Paperlight",
     "asar": true,
     "npmRebuild": false,
     "files": [
@@ -85,10 +85,10 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "PDF Editor"
+      "shortcutName": "Paperlight"
     },
     "portable": {
-      "artifactName": "PDF-Editor-Portable-${version}.exe"
+      "artifactName": "Paperlight-Portable-${version}.exe"
     },
     "publish": null
   }

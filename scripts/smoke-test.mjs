@@ -62,6 +62,24 @@ async function main() {
   await win.screenshot({ path: path.join(root, 'scratch-empty-state.png') });
   console.log('OK: app booted, empty state screenshot saved');
 
+  assert((await win.locator('.titlebar').count()) === 1, 'custom frameless title bar rendered');
+  assert((await win.locator('.menubar').count()) === 1, 'custom menu bar rendered');
+
+  // main.js sets no native menu (frame:false hides it, and its
+  // accelerators didn't reliably fire once hidden anyway - confirmed
+  // empirically), so App.jsx's own keydown listener is the sole
+  // accelerator source. Verify Ctrl+O actually reaches it.
+  await app.evaluate(({ dialog }) => {
+    dialog.showOpenDialog = async () => {
+      global.__ctrlOFired = true;
+      return { canceled: true, filePaths: [] };
+    };
+  });
+  await win.locator('.app').click({ position: { x: 400, y: 400 } });
+  await win.keyboard.press('Control+O');
+  await win.waitForTimeout(400);
+  assert(await app.evaluate(() => !!global.__ctrlOFired), 'Ctrl+O opens the file dialog via the renderer-side accelerator handler');
+
   const pdfBytes = await makeTestPdf();
   const b64 = Buffer.from(pdfBytes).toString('base64');
 
@@ -87,14 +105,16 @@ async function main() {
   let textareaCount = await win.locator('textarea.field').count();
   assert(textareaCount > 0, 'clicking existing PDF text opens an inline editor');
 
-  // Deselect (setTool('select') clears doc.selection) so the properties
-  // panel is closed before measuring the reflow baseline below.
-  await win.locator('button.tbtn[title="Select"]').click();
+  // Deselect (setTool('select') clears doc.selection).
+  await win.locator('.tcbtn[title="Select"]').click();
   await win.waitForTimeout(150);
 
-  // --- add a new text box, verify no properties-panel layout thrash ----
+  // --- add a new text box, verify no viewer layout thrash ---------------
+  // The properties panel is now a permanent fixture (contextual to the
+  // active tool rather than only appearing on selection), so this guards
+  // against a regression of the original reflow bug via a different path.
   const wrapBoxBefore = await win.locator('.viewer-wrap').boundingBox();
-  await win.locator('button.tbtn[title="Text"]').click();
+  await win.locator('.tcbtn[title="Text"]').click();
   await win.waitForTimeout(150);
   const wrapBoxAfterToolSelect = await win.locator('.viewer-wrap').boundingBox();
   assert(
@@ -111,20 +131,19 @@ async function main() {
   await win.locator('.viewer-wrap').click({ position: { x: 10, y: 300 } });
 
   // --- draw a rectangle, confirm it stays put ---------------------------
-  await win.locator('button.tbtn[title="Rect"]').click();
+  await win.locator('.tcbtn[title="Rectangle"]').click();
   await win.mouse.move(box.x + 150, box.y + 150);
   await win.mouse.down();
   await win.mouse.move(box.x + 250, box.y + 200, { steps: 5 });
   await win.mouse.up();
   await win.waitForTimeout(200);
-  const layerRows = await win.locator('.sidebar-tab', { hasText: 'Layers' });
-  await layerRows.click();
+  await win.locator('.rail-btn[title="Layers"]').click();
   await win.waitForTimeout(200);
   const layerCount = await win.locator('.layer-row').count();
   assert(layerCount >= 2, `Layers panel lists created objects (${layerCount})`);
 
   // --- ellipse ---------------------------------------------------------
-  await win.locator('button.tbtn[title="Ellipse"]').click();
+  await win.locator('.tcbtn[title="Ellipse"]').click();
   await win.mouse.move(box.x + 300, box.y + 150);
   await win.mouse.down();
   await win.mouse.move(box.x + 400, box.y + 220, { steps: 5 });
@@ -138,7 +157,7 @@ async function main() {
   // --- arrow: preview head must be a real polygon, not a shared <marker>.
   // Two arrows in different colors used to collide on a single marker id
   // ("arrowhead"), so both rendered with the first one's color.
-  await win.locator('button.tbtn[title="Arrow"]').click();
+  await win.locator('.tcbtn[title="Arrow"]').click();
   await win.mouse.move(box.x + 150, box.y + 300);
   await win.mouse.down();
   await win.mouse.move(box.x + 320, box.y + 360, { steps: 5 });
@@ -167,7 +186,7 @@ async function main() {
     dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [target] });
   }, imgPath);
   assert((await win.locator('.page-overlay img').count()) === 0, 'no image on the page before inserting');
-  await win.locator('button.tbtn[title="Insert an image (PNG/JPG)"]').click();
+  await win.locator('.tcbtn[title="Insert an image (PNG/JPG)"]').click();
   await win.waitForTimeout(1000);
   assert(
     (await win.locator('.page-overlay img').count()) === 1,
@@ -182,7 +201,10 @@ async function main() {
     dialog.showSaveDialog = async () => ({ canceled: false, filePath: target });
   }, savePath);
 
-  await win.getByTitle('Save As (Ctrl+Shift+S)').click();
+  // Save As lives in the File menu now (the toolbar only keeps Open/Save/
+  // Export per the redesign), so drive it through the custom menu bar.
+  await win.locator('.menubar-item', { hasText: 'File' }).click();
+  await win.locator('.menubar-dropdown-item', { hasText: 'Save As...' }).click();
   await win.waitForTimeout(1000);
 
   const toastText = await win.locator('.toast').textContent().catch(() => null);

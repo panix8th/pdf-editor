@@ -26,7 +26,7 @@ async function signWithP12(pdfBytes, p12Bytes, password, meta = {}) {
     pdfDoc,
     reason: meta.reason || 'Document approval',
     contactInfo: meta.contactInfo || '',
-    name: meta.name || 'PDF Editor Signer',
+    name: meta.name || 'Paperlight Signer',
     location: meta.location || ''
   });
 

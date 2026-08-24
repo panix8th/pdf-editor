@@ -5,6 +5,7 @@ import { bakeDocument, mergePdfs, splitPdf, exportPagesAsImages } from '../pdf/d
 import { PDFDocument } from 'pdf-lib';
 import { applyPasswordProtection } from '../pdf/security';
 import { resolveAndCacheGoogleFont } from '../pdf/fetchAndCacheGoogleFont';
+import PaperlightMark from './PaperlightMark.jsx';
 
 export default function Dialogs({ dialog }) {
   const closeDialog = useStore((s) => s.closeDialog);
@@ -547,7 +548,7 @@ function DigitalSignatureDialog() {
       const result = await window.pdfEditor.signDigital(plainBytes, cert.data, password, {
         reason,
         location,
-        name: signerName || 'PDF Editor Signer'
+        name: signerName || 'Paperlight Signer'
       });
       if (!result.ok) throw new Error(result.error);
       const savedPath = await window.pdfEditor.saveAs(doc.name, result.data);
@@ -845,8 +846,16 @@ function AboutDialog() {
     window.pdfEditor.getAppVersion().then(setVersion);
   }, []);
   return (
-    <Modal title="About PDF Editor">
-      <p>PDF Editor v{version}</p>
+    <Modal title="About Paperlight">
+      <div className="about-lockup">
+        <span className="about-mark">
+          <PaperlightMark size={40} />
+        </span>
+        <span className="about-wordmark">
+          Paper<span className="accent-text">light</span>
+        </span>
+      </div>
+      <p className="hint" style={{ textAlign: 'center' }}>Version {version}</p>
       <p className="hint">A lightweight, fully offline desktop PDF viewer and editor. No telemetry, no network access.</p>
       <div className="modal-actions">
         <button className="btn primary" onClick={closeDialog}>

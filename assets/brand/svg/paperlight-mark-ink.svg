@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" fill="none" role="img" aria-label="Paperlight">
+  <title>Paperlight mark — single colour</title>
+  <rect x="14" y="10" width="9" height="44" rx="4.5" fill="#0F0E14"></rect>
+  <path d="M23 14.5h11a13 13 0 010 26H23" stroke="#0F0E14" stroke-width="9" stroke-linecap="round" fill="none"></path>
+</svg>

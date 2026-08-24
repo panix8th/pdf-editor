@@ -413,7 +413,7 @@ export async function bakeDocument({ docState, resources, formValues }) {
       }
     }
     applyFormValues(outDoc, formValues);
-    outDoc.setProducer('PDF Editor');
+    outDoc.setProducer('Paperlight');
     outDoc.setModificationDate(new Date());
     return outDoc.save();
   }
@@ -457,7 +457,7 @@ export async function bakeDocument({ docState, resources, formValues }) {
   }
 
   applyFormValues(outDoc, formValues);
-  outDoc.setProducer('PDF Editor');
+  outDoc.setProducer('Paperlight');
   outDoc.setModificationDate(new Date());
   return outDoc.save();
 }
@@ -473,7 +473,7 @@ export async function mergePdfs(files) {
     const pages = await outDoc.copyPages(src, src.getPageIndices());
     pages.forEach((p) => outDoc.addPage(p));
   }
-  outDoc.setProducer('PDF Editor');
+  outDoc.setProducer('Paperlight');
   return outDoc.save();
 }
 
@@ -487,7 +487,7 @@ export async function splitPdf(bytes, ranges) {
     for (let i = range.from; i <= range.to; i++) indices.push(i - 1);
     const pages = await outDoc.copyPages(src, indices);
     pages.forEach((p) => outDoc.addPage(p));
-    outDoc.setProducer('PDF Editor');
+    outDoc.setProducer('Paperlight');
     const data = await outDoc.save();
     results.push({ name: `pages_${range.from}-${range.to}.pdf`, data });
   }

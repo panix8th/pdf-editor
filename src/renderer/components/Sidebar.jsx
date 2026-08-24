@@ -1,13 +1,14 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useStore, getResource } from '../state/store';
 import { searchDocument } from '../pdf/textSearch';
+import { IconPages, IconOutline, IconSearch, IconForms, IconLayers } from './Icons.jsx';
 
 const TABS = [
-  { id: 'thumbnails', label: 'Pages' },
-  { id: 'outline', label: 'Outline' },
-  { id: 'search', label: 'Search' },
-  { id: 'forms', label: 'Forms' },
-  { id: 'layers', label: 'Layers' }
+  { id: 'thumbnails', label: 'Pages', icon: IconPages },
+  { id: 'outline', label: 'Outline', icon: IconOutline },
+  { id: 'search', label: 'Search', icon: IconSearch },
+  { id: 'forms', label: 'Forms', icon: IconForms },
+  { id: 'layers', label: 'Layers', icon: IconLayers }
 ];
 
 const TYPE_LABELS = {
@@ -23,32 +24,113 @@ const TYPE_LABELS = {
   redact: 'Redaction'
 };
 
+const MIN_PANEL_W = 200;
+const MAX_PANEL_W = 420;
+
+function panelCount(doc, tab) {
+  if (!doc) return null;
+  if (tab === 'thumbnails') return `${doc.pageCount} page${doc.pageCount === 1 ? '' : 's'}`;
+  if (tab === 'outline') return `${doc.outline?.length || 0}`;
+  if (tab === 'search') return doc.search.matches.length ? `${doc.search.matches.length}` : null;
+  if (tab === 'forms') return doc.formFields?.length ? `${doc.formFields.length}` : null;
+  if (tab === 'layers') {
+    const page = doc.pages[doc.currentPage - 1];
+    const count = page ? (doc.annotations[page.key] || []).length : 0;
+    return `${count}`;
+  }
+  return null;
+}
+
 export default function Sidebar() {
   const sidebarOpen = useStore((s) => s.sidebarOpen);
   const sidebarTab = useStore((s) => s.sidebarTab);
   const setSidebarTab = useStore((s) => s.setSidebarTab);
+  const toggleSidebar = useStore((s) => s.toggleSidebar);
   const doc = useStore((s) => s.documents[s.activeId]);
+  const insertBlankPage = useStore((s) => s.insertBlankPage);
+  const rotatePage = useStore((s) => s.rotatePage);
+  const deletePage = useStore((s) => s.deletePage);
 
-  if (!sidebarOpen) return null;
+  const [panelWidth, setPanelWidth] = useState(236);
+  const resizing = useRef(false);
+
+  const onRailClick = (tabId) => {
+    if (sidebarTab === tabId && sidebarOpen) toggleSidebar();
+    else setSidebarTab(tabId);
+  };
+
+  const onResizerDown = (e) => {
+    e.preventDefault();
+    resizing.current = true;
+    const startX = e.clientX;
+    const startW = panelWidth;
+    const onMove = (ev) => {
+      const next = Math.min(MAX_PANEL_W, Math.max(MIN_PANEL_W, startW + (ev.clientX - startX)));
+      setPanelWidth(next);
+    };
+    const onUp = () => {
+      resizing.current = false;
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  };
+
+  const currentPageKey = doc?.pages[doc.currentPage - 1]?.key;
+  const activeTab = TABS.find((t) => t.id === sidebarTab);
+  const count = panelCount(doc, sidebarTab);
 
   return (
-    <div className="sidebar">
-      <div className="sidebar-tabs">
-        {TABS.map((t) => (
-          <div key={t.id} className={`sidebar-tab ${sidebarTab === t.id ? 'active' : ''}`} onClick={() => setSidebarTab(t.id)}>
-            {t.label}
+    <>
+      <div className="icon-rail">
+        {TABS.map((t) => {
+          const Icon = t.icon;
+          return (
+            <div
+              key={t.id}
+              className={`rail-btn ${sidebarTab === t.id && sidebarOpen ? 'active' : ''}`}
+              title={t.label}
+              onClick={() => onRailClick(t.id)}
+            >
+              <Icon />
+            </div>
+          );
+        })}
+        <div className="rail-spacer" />
+      </div>
+
+      {sidebarOpen && (
+        <div className="side-panel" style={{ width: panelWidth }}>
+          <div className="panel-header">
+            <span className="panel-title">{activeTab.label}</span>
+            {count != null && <span className="panel-count">{count}</span>}
           </div>
-        ))}
-      </div>
-      <div className="sidebar-body">
-        {!doc && <div className="outline-empty">Open a PDF to see its pages.</div>}
-        {doc && sidebarTab === 'thumbnails' && <Thumbnails doc={doc} />}
-        {doc && sidebarTab === 'outline' && <Outline doc={doc} />}
-        {doc && sidebarTab === 'search' && <SearchPanel doc={doc} />}
-        {doc && sidebarTab === 'forms' && <FormsPanel doc={doc} />}
-        {doc && sidebarTab === 'layers' && <LayersPanel doc={doc} />}
-      </div>
-    </div>
+          <div className="panel-body">
+            {!doc && <div className="outline-empty">Open a PDF to see its pages.</div>}
+            {doc && sidebarTab === 'thumbnails' && <Thumbnails doc={doc} />}
+            {doc && sidebarTab === 'outline' && <Outline doc={doc} />}
+            {doc && sidebarTab === 'search' && <SearchPanel doc={doc} />}
+            {doc && sidebarTab === 'forms' && <FormsPanel doc={doc} />}
+            {doc && sidebarTab === 'layers' && <LayersPanel doc={doc} />}
+          </div>
+          {doc && sidebarTab === 'thumbnails' && (
+            <div className="panel-footer">
+              <div className="panel-footer-btn" onClick={() => insertBlankPage(doc.id, doc.currentPage - 1)}>
+                Insert
+              </div>
+              <div className="panel-footer-btn" onClick={() => currentPageKey && rotatePage(doc.id, currentPageKey, 90)}>
+                Rotate
+              </div>
+              <div className="panel-footer-btn danger" onClick={() => currentPageKey && deletePage(doc.id, currentPageKey)}>
+                Delete
+              </div>
+            </div>
+          )}
+          <div className="rail-resizer" onMouseDown={onResizerDown} />
+        </div>
+      )}
+    </>
   );
 }
 
@@ -89,7 +171,9 @@ function Thumbnails({ doc }) {
           onDrop={onDrop(i)}
           onClick={() => scrollToPage(doc.id, i)}
         >
-          <PageThumb doc={doc} page={p} />
+          <div className="thumb-frame">
+            <PageThumb doc={doc} page={p} />
+          </div>
           <div className="thumb-label">
             <span>Page {i + 1}</span>
           </div>

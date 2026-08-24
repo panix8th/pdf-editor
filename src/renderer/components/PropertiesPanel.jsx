@@ -2,6 +2,31 @@ import React, { useRef } from 'react';
 import { useStore } from '../state/store';
 import { STANDARD_FONT_FAMILIES } from '../pdf/fonts';
 
+const PALETTE = ['#b49bf0', '#d79bef', '#9aa8f5', '#f5d99a', '#9af5c6'];
+
+/** Preset swatches + a custom tile that opens the native color picker
+ * (its own background reflects the current color once it's not one of
+ * the presets, so a custom pick doesn't look unselected). */
+function ColorSwatches({ value, onChange }) {
+  const lower = (value || '').toLowerCase();
+  const isPreset = PALETTE.includes(lower);
+  return (
+    <div className="color-swatches">
+      {PALETTE.map((c) => (
+        <div key={c} className={`color-swatch ${lower === c ? 'selected' : ''}`} style={{ background: c }} onClick={() => onChange(c)} />
+      ))}
+      <div
+        className={`color-swatch custom ${!isPreset && value ? 'selected' : ''}`}
+        style={!isPreset && value ? { background: value } : undefined}
+        title="Custom color"
+      >
+        {isPreset || !value ? '+' : ''}
+        <input type="color" value={value || '#000000'} onChange={(e) => onChange(e.target.value)} />
+      </div>
+    </div>
+  );
+}
+
 export default function PropertiesPanel() {
   const doc = useStore((s) => s.documents[s.activeId]);
   const updateAnnotation = useStore((s) => s.updateAnnotation);
@@ -44,62 +69,66 @@ export default function PropertiesPanel() {
   const showStrokeProps = SHAPE_STROKE_TYPES.includes(selected ? selected.type : doc.tool);
   const showFillProps = ['rect', 'ellipse'].includes(selected ? selected.type : doc.tool);
   const showHighlightProps = selected ? selected.type === 'highlight' : doc.tool === 'highlight';
+  const toolLabel = selected ? `${selected.type[0].toUpperCase()}${selected.type.slice(1)}` : `${doc.tool[0].toUpperCase()}${doc.tool.slice(1)}`;
 
   return (
     <div className="properties-panel">
-      <div className="pp-title">{selected ? 'Object Properties' : `${doc.tool[0].toUpperCase()}${doc.tool.slice(1)} Tool Defaults`}</div>
+      <div className="pp-header">
+        <span className="pp-header-title">Properties</span>
+        <span className="pp-header-chip">{toolLabel}</span>
+      </div>
 
       {showTextProps && (
-        <>
-          <div className="pp-row">
-            <label>Font Family</label>
-            <select className="field" value={fontFamilyValue} onChange={(e) => onFontFamilyChange(e.target.value)}>
-              {STANDARD_FONT_FAMILIES.map((f) => (
-                <option key={f.id} value={f.id}>
-                  {f.label}
-                </option>
-              ))}
-              {doc.customFontsList.map((f) => (
-                <option key={f.id} value={`custom:${f.id}`}>
-                  {f.name} (custom)
-                </option>
-              ))}
-            </select>
-            <div className="btn-row">
-              <button className="btn" onClick={() => openFontPicker(doc.id, (patch) => target.set(patch))}>
-                System Fonts...
-              </button>
-              <button className="btn" onClick={() => openGoogleFontPicker(doc.id, (patch) => target.set(patch))}>
-                Google Fonts...
-              </button>
-            </div>
-            <div className="btn-row">
-              <button className="btn" onClick={() => fontInputRef.current.click()}>
-                Load .ttf / .otf...
-              </button>
-            </div>
-            <input
-              ref={fontInputRef}
-              type="file"
-              accept=".ttf,.otf"
-              style={{ display: 'none' }}
-              onChange={(e) => e.target.files[0] && loadCustomFont(e.target.files[0])}
-            />
+        <div className="pp-section">
+          <span className="pp-section-label">Font</span>
+          <select className="field" value={fontFamilyValue} onChange={(e) => onFontFamilyChange(e.target.value)}>
+            {STANDARD_FONT_FAMILIES.map((f) => (
+              <option key={f.id} value={f.id}>
+                {f.label}
+              </option>
+            ))}
+            {doc.customFontsList.map((f) => (
+              <option key={f.id} value={`custom:${f.id}`}>
+                {f.name} (custom)
+              </option>
+            ))}
+          </select>
+          <div className="btn-row">
+            <button className="btn" onClick={() => openFontPicker(doc.id, (patch) => target.set(patch))}>
+              System Fonts...
+            </button>
+            <button className="btn" onClick={() => openGoogleFontPicker(doc.id, (patch) => target.set(patch))}>
+              Google Fonts...
+            </button>
           </div>
-          <div className="pp-row">
-            <label>Size</label>
-            <input
-              type="number"
-              className="field"
-              value={target.get('fontSize')}
-              onChange={(e) => target.set({ fontSize: Number(e.target.value) })}
-            />
+          <div className="btn-row">
+            <button className="btn" onClick={() => fontInputRef.current.click()}>
+              Load .ttf / .otf...
+            </button>
           </div>
-          <div className="pp-row">
-            <label>Color</label>
-            <input type="color" className="field" value={target.get('color')} onChange={(e) => target.set({ color: e.target.value })} />
+          <input
+            ref={fontInputRef}
+            type="file"
+            accept=".ttf,.otf"
+            style={{ display: 'none' }}
+            onChange={(e) => e.target.files[0] && loadCustomFont(e.target.files[0])}
+          />
+
+          <div className="pp-section-label" style={{ marginTop: 4 }}>
+            <span>Size</span>
+            <span className="value">{target.get('fontSize')} px</span>
           </div>
-          <div className="pp-row pp-row-inline">
+          <input
+            type="number"
+            className="field"
+            value={target.get('fontSize')}
+            onChange={(e) => target.set({ fontSize: Number(e.target.value) })}
+          />
+
+          <span className="pp-section-label" style={{ marginTop: 4 }}>Color</span>
+          <ColorSwatches value={target.get('color')} onChange={(c) => target.set({ color: c })} />
+
+          <div className="pp-row-inline" style={{ marginTop: 4 }}>
             <button className={`btn ${target.get('bold') ? 'primary' : ''}`} onClick={() => target.set({ bold: !target.get('bold') })}>
               B
             </button>
@@ -113,103 +142,110 @@ export default function PropertiesPanel() {
             ))}
           </div>
           {selected && (
-            <div className="pp-row">
-              <label>Text</label>
+            <>
+              <span className="pp-section-label" style={{ marginTop: 4 }}>Text</span>
               <textarea className="field" value={selected.text} onChange={(e) => target.set({ text: e.target.value })} />
-            </div>
+            </>
           )}
-        </>
+        </div>
       )}
 
       {showStrokeProps && (
-        <>
-          <div className="pp-row">
-            <label>Stroke Color</label>
-            <input type="color" className="field" value={target.get('strokeColor')} onChange={(e) => target.set({ strokeColor: e.target.value })} />
+        <div className="pp-section">
+          <span className="pp-section-label">Stroke</span>
+          <ColorSwatches value={target.get('strokeColor')} onChange={(c) => target.set({ strokeColor: c })} />
+          <div className="pp-section-label" style={{ marginTop: 4 }}>
+            <span>Width</span>
+            <span className="value">{target.get('strokeWidth')} px</span>
           </div>
-          <div className="pp-row">
-            <label>Stroke Width</label>
-            <input
-              type="number"
-              min="1"
-              max="30"
-              className="field"
-              value={target.get('strokeWidth')}
-              onChange={(e) => target.set({ strokeWidth: Number(e.target.value) })}
-            />
-          </div>
-        </>
+          <input
+            type="range"
+            className="pp-slider"
+            min="1"
+            max="30"
+            value={target.get('strokeWidth')}
+            onChange={(e) => target.set({ strokeWidth: Number(e.target.value) })}
+          />
+        </div>
       )}
 
       {showFillProps && (
-        <>
-          <div className="pp-row">
-            <label>Fill Color (optional)</label>
-            <input
-              type="color"
-              className="field"
-              value={target.get('fillColor') || '#ffffff'}
-              onChange={(e) => target.set({ fillColor: e.target.value })}
-            />
-            <button className="btn" onClick={() => target.set({ fillColor: '' })}>
-              No Fill
-            </button>
+        <div className="pp-section">
+          <div className="pp-section-label">
+            <span>Fill</span>
+            {target.get('fillColor') && (
+              <span className="value" style={{ cursor: 'pointer', color: 'var(--accent)' }} onClick={() => target.set({ fillColor: '' })}>
+                No fill
+              </span>
+            )}
           </div>
-          <div className="pp-row">
-            <label>Fill Opacity</label>
-            <input
-              type="range"
-              min="0"
-              max="1"
-              step="0.05"
-              value={target.get('fillOpacity') ?? 0.3}
-              onChange={(e) => target.set({ fillOpacity: Number(e.target.value) })}
-            />
-          </div>
-        </>
+          <ColorSwatches value={target.get('fillColor') || ''} onChange={(c) => target.set({ fillColor: c })} />
+          {target.get('fillColor') && (
+            <>
+              <div className="pp-section-label" style={{ marginTop: 4 }}>
+                <span>Opacity</span>
+                <span className="value">{Math.round((target.get('fillOpacity') ?? 0.3) * 100)}%</span>
+              </div>
+              <input
+                type="range"
+                className="pp-slider"
+                min="0"
+                max="1"
+                step="0.05"
+                value={target.get('fillOpacity') ?? 0.3}
+                onChange={(e) => target.set({ fillOpacity: Number(e.target.value) })}
+              />
+            </>
+          )}
+        </div>
       )}
 
       {showHighlightProps && (
-        <>
-          <div className="pp-row">
-            <label>Highlight Color</label>
-            <input
-              type="color"
-              className="field"
-              value={selected ? selected.color : doc.toolOptions.highlightColor}
-              onChange={(e) => (selected ? target.set({ color: e.target.value }) : setToolOptions(doc.id, { highlightColor: e.target.value }))}
-            />
-          </div>
+        <div className="pp-section">
+          <span className="pp-section-label">Color</span>
+          <ColorSwatches
+            value={selected ? selected.color : doc.toolOptions.highlightColor}
+            onChange={(c) => (selected ? target.set({ color: c }) : setToolOptions(doc.id, { highlightColor: c }))}
+          />
           {selected && (
-            <div className="pp-row">
-              <label>Opacity</label>
-              <input type="range" min="0.1" max="0.9" step="0.05" value={selected.opacity ?? 0.4} onChange={(e) => target.set({ opacity: Number(e.target.value) })} />
-            </div>
+            <>
+              <div className="pp-section-label" style={{ marginTop: 4 }}>
+                <span>Opacity</span>
+                <span className="value">{Math.round((selected.opacity ?? 0.4) * 100)}%</span>
+              </div>
+              <input
+                type="range"
+                className="pp-slider"
+                min="0.1"
+                max="0.9"
+                step="0.05"
+                value={selected.opacity ?? 0.4}
+                onChange={(e) => target.set({ opacity: Number(e.target.value) })}
+              />
+            </>
           )}
-        </>
+        </div>
       )}
 
       {selected && (selected.type === 'image' || selected.type === 'signature') && (
-        <div className="hint">Drag to move, drag a corner to resize.</div>
+        <div className="pp-section">
+          <span className="hint" style={{ marginTop: 0 }}>Drag to move, drag a corner to resize.</span>
+        </div>
       )}
 
       {selected && (
-        <>
-          <div className="pp-row">
-            <label>Layer order</label>
-            <div className="btn-row">
-              <button className="btn btn-icon" title="Bring to front" onClick={() => moveAnnotationLayer(doc.id, selection.pageKey, selection.objectId, 'front')}>⤒</button>
-              <button className="btn btn-icon" title="Move forward" onClick={() => moveAnnotationLayer(doc.id, selection.pageKey, selection.objectId, 'forward')}>↑</button>
-              <button className="btn btn-icon" title="Move backward" onClick={() => moveAnnotationLayer(doc.id, selection.pageKey, selection.objectId, 'backward')}>↓</button>
-              <button className="btn btn-icon" title="Send to back" onClick={() => moveAnnotationLayer(doc.id, selection.pageKey, selection.objectId, 'back')}>⤓</button>
-            </div>
+        <div className="pp-section" style={{ border: 'none' }}>
+          <span className="pp-section-label">Layer order</span>
+          <div className="btn-row" style={{ marginTop: 0 }}>
+            <button className="btn btn-icon" title="Bring to front" onClick={() => moveAnnotationLayer(doc.id, selection.pageKey, selection.objectId, 'front')}>⤒</button>
+            <button className="btn btn-icon" title="Move forward" onClick={() => moveAnnotationLayer(doc.id, selection.pageKey, selection.objectId, 'forward')}>↑</button>
+            <button className="btn btn-icon" title="Move backward" onClick={() => moveAnnotationLayer(doc.id, selection.pageKey, selection.objectId, 'backward')}>↓</button>
+            <button className="btn btn-icon" title="Send to back" onClick={() => moveAnnotationLayer(doc.id, selection.pageKey, selection.objectId, 'back')}>⤓</button>
           </div>
-          <div className="btn-row">
-            <button className="btn danger" onClick={() => deleteAnnotation(doc.id, selection.pageKey, selection.objectId)}>
-              Delete Object
-            </button>
-          </div>
-        </>
+          <button className="btn danger" style={{ marginTop: 8 }} onClick={() => deleteAnnotation(doc.id, selection.pageKey, selection.objectId)}>
+            Delete Object
+          </button>
+        </div>
       )}
     </div>
   );

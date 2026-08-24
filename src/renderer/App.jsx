@@ -1,17 +1,29 @@
 import React, { useEffect, useCallback, useRef, useState } from 'react';
 import { useStore, getResource } from './state/store';
 import { bakeDocument } from './pdf/documentIO';
+import TitleBar from './components/TitleBar.jsx';
+import MenuBar from './components/MenuBar.jsx';
 import Toolbar from './components/Toolbar.jsx';
-import ToolOptionsBar from './components/ToolOptionsBar.jsx';
 import Sidebar from './components/Sidebar.jsx';
 import Viewer from './components/Viewer.jsx';
 import PropertiesPanel from './components/PropertiesPanel.jsx';
 import StatusBar from './components/StatusBar.jsx';
 import Dialogs from './components/Dialogs.jsx';
+import { IconUpload } from './components/Icons.jsx';
+import { getRecentFiles, removeRecentFile, formatRelativeTime } from './state/recentFiles';
 
 async function fileToMeta(file) {
   const buf = await file.arrayBuffer();
-  return { name: file.name, path: null, data: new Uint8Array(buf) };
+  // Resolve the real filesystem path for a dragged-in file so it behaves
+  // exactly like one opened via the dialog: Save (not just Save As) works,
+  // and it can appear in the Recent list.
+  let path = null;
+  try {
+    path = window.pdfEditor.getPathForFile(file) || null;
+  } catch {
+    /* not fatal - falls back to Save As-only, same as before this existed */
+  }
+  return { name: file.name, path, data: new Uint8Array(buf) };
 }
 
 export default function App() {
@@ -22,7 +34,6 @@ export default function App() {
   const toast = useStore((s) => s.toast);
   const dialog = useStore((s) => s.dialog);
   const closeDocument = useStore((s) => s.closeDocument);
-  const setActive = useStore((s) => s.setActive);
   const openFile = useStore((s) => s.openFile);
   const openDialog = useStore((s) => s.openDialog);
   const showToast = useStore((s) => s.showToast);
@@ -37,12 +48,38 @@ export default function App() {
   const setFitMode = useStore((s) => s.setFitMode);
   const updateDoc = useStore((s) => s.updateDoc);
 
+  const accent = useStore((s) => s.accent);
   const [dragging, setDragging] = useState(false);
+  const [recentFiles, setRecentFiles] = useState(() => getRecentFiles());
   const activeDoc = documents[activeId] || null;
 
   useEffect(() => {
     document.body.dataset.theme = theme;
   }, [theme]);
+
+  useEffect(() => {
+    document.body.dataset.accent = accent;
+  }, [accent]);
+
+  // Refresh the Recent list whenever a document opens (a fresh open, or
+  // the reorder that happens when re-opening an existing recent entry).
+  useEffect(() => {
+    if (!activeDoc) setRecentFiles(getRecentFiles());
+  }, [order.length, activeDoc]);
+
+  const openRecent = useCallback(
+    async (path) => {
+      try {
+        const fileMeta = await window.pdfEditor.readPath(path);
+        await openFile(fileMeta);
+      } catch {
+        showToast('error', 'Could not open that file - it may have moved or been deleted.');
+        removeRecentFile(path);
+        setRecentFiles(getRecentFiles());
+      }
+    },
+    [openFile, showToast]
+  );
 
   useEffect(() => {
     if (!toast) return;
@@ -68,12 +105,12 @@ export default function App() {
         const bytes = await bakeDocument({ docState: doc, resources, formValues: doc.formValues });
         if (!forcePathPicker && doc.filePath) {
           await window.pdfEditor.writeToPath(doc.filePath, bytes);
-          updateDoc(doc.id, { dirty: false });
+          updateDoc(doc.id, { dirty: false, fileSize: bytes.length });
           showToast('info', `Saved to ${doc.filePath}`);
         } else {
           const savedPath = await window.pdfEditor.saveAs(doc.name, bytes);
           if (savedPath) {
-            updateDoc(doc.id, { dirty: false, filePath: savedPath, name: savedPath.split(/[\\/]/).pop() });
+            updateDoc(doc.id, { dirty: false, filePath: savedPath, name: savedPath.split(/[\\/]/).pop(), fileSize: bytes.length });
             showToast('info', `Saved to ${savedPath}`);
           }
         }
@@ -85,8 +122,13 @@ export default function App() {
   );
 
   // ---- menu actions -----------------------------------------------------
-  useEffect(() => {
-    const off = window.pdfEditor.onMenuAction(({ action }) => {
+  // Shared by the native accelerators (forwarded from main via IPC - see
+  // menu.js, whose click handlers still fire even though frame:false hides
+  // the native menu bar those accelerators would otherwise live in) and the
+  // custom-styled MenuBar the renderer draws in its place, so both paths
+  // run identical logic.
+  const runMenuAction = useCallback(
+    (action) => {
       const s = useStore.getState();
       const doc = s.documents[s.activeId];
       switch (action) {
@@ -211,9 +253,50 @@ export default function App() {
         default:
           break;
       }
-    });
-    return off;
-  }, [handleOpenDialog, doSave, openDialog, showToast, closeDocument, undo, redo, deleteSelected, setTool, setZoom, setFitMode, toggleSidebar, toggleTheme]);
+    },
+    [handleOpenDialog, doSave, openDialog, showToast, closeDocument, undo, redo, deleteSelected, setTool, setZoom, setFitMode, toggleSidebar, toggleTheme]
+  );
+
+  // Renderer-side keyboard accelerators (Ctrl+O, Ctrl+S, ...) - the sole
+  // source now that main.js sets no native menu (frame:false hides it
+  // anyway, and its accelerators didn't reliably fire once hidden -
+  // confirmed empirically, not just theorized).
+  useEffect(() => {
+    const onKeyDown = (e) => {
+      if (!e.ctrlKey) {
+        if (e.key === 'Delete') {
+          const active = document.activeElement;
+          const typing = active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable);
+          if (!typing) runMenuAction('edit:deleteSelected');
+        }
+        return;
+      }
+      const active = document.activeElement;
+      const typing = active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable);
+      if (typing) return;
+
+      const key = e.key.toLowerCase();
+      const map = {
+        o: 'file:open',
+        s: e.shiftKey ? 'file:saveAs' : 'file:save',
+        w: 'file:close',
+        z: e.shiftKey ? 'edit:redo' : 'edit:undo',
+        f: 'edit:find',
+        t: 'tool:text',
+        b: 'view:toggleSidebar',
+        j: 'view:toggleTheme'
+      };
+      let action = map[key];
+      if (!action && (key === '=' || key === '+')) action = 'view:zoomIn';
+      if (!action && key === '-') action = 'view:zoomOut';
+      if (!action) return;
+
+      e.preventDefault();
+      runMenuAction(action);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [runMenuAction]);
 
   useEffect(() => {
     return window.pdfEditor.onFileOpenedExternally((fileMeta) => {
@@ -251,32 +334,9 @@ export default function App() {
       onDragLeave={() => setDragging(false)}
       onDrop={onDrop}
     >
-      <div className="tabbar">
-        {order.map((id) => {
-          const d = documents[id];
-          return (
-            <div key={id} className={`tab ${id === activeId ? 'active' : ''}`} onClick={() => setActive(id)}>
-              <span className="tab-name" title={d.name}>
-                {d.name}
-              </span>
-              {d.dirty && <span className="tab-dirty">●</span>}
-              <span
-                className="tab-close"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  closeDocument(id);
-                }}
-              >
-                ×
-              </span>
-            </div>
-          );
-        })}
-        {order.length === 0 && <div className="tab-empty-hint">No documents open</div>}
-      </div>
-
+      <TitleBar onOpen={handleOpenDialog} />
+      <MenuBar runMenuAction={runMenuAction} />
       <Toolbar onOpen={handleOpenDialog} onSave={() => doSave(false)} onSaveAs={() => doSave(true)} />
-      <ToolOptionsBar />
 
       <div className="main-area">
         <Sidebar />
@@ -285,15 +345,36 @@ export default function App() {
         ) : (
           <div className="empty-state">
             <div className={`dropzone ${dragging ? 'dragging' : ''}`}>
-              <p>Drag &amp; drop PDF files here</p>
-              <p>or</p>
-              <button className="btn primary" onClick={handleOpenDialog}>
-                Open a PDF
-              </button>
+              <div className="dropzone-icon">
+                <IconUpload />
+              </div>
+              <div className="dropzone-heading">Drop a PDF here</div>
+              <div className="dropzone-body">Or open one from disk. Multiple files open as tabs.</div>
+              <div className="dropzone-actions">
+                <div className="dropzone-btn primary" onClick={handleOpenDialog}>
+                  Open a PDF
+                </div>
+              </div>
             </div>
+            {recentFiles.length > 0 && (
+              <div className="recent-list">
+                <span className="recent-header">Recent</span>
+                {recentFiles.map((f) => (
+                  <div key={f.path} className="recent-row" onClick={() => openRecent(f.path)}>
+                    <div className="recent-thumb" />
+                    <div className="recent-info">
+                      <span className="recent-name">{f.name}</span>
+                      <span className="recent-meta">
+                        {f.pageCount} page{f.pageCount === 1 ? '' : 's'} · {formatRelativeTime(f.openedAt)}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
-        {activeDoc && activeDoc.selection && <PropertiesPanel />}
+        {activeDoc && <PropertiesPanel />}
       </div>
 
       <StatusBar />

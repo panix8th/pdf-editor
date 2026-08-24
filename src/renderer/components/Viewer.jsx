@@ -2,6 +2,34 @@ import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import { useStore, getResource } from '../state/store';
 import AnnotationLayer from './AnnotationLayer.jsx';
 import { fakePage } from '../pdf/viewportMath';
+import {
+  IconSelect,
+  IconText,
+  IconImage,
+  IconHighlight,
+  IconRect,
+  IconEllipse,
+  IconLine,
+  IconArrow,
+  IconPen,
+  IconRedact,
+  IconSinglePage,
+  IconContinuous,
+  IconRotateView
+} from './Icons.jsx';
+
+const TOOL_META = {
+  select: { label: 'Select', icon: IconSelect },
+  text: { label: 'Text', icon: IconText },
+  image: { label: 'Image', icon: IconImage },
+  highlight: { label: 'Highlight', icon: IconHighlight },
+  rect: { label: 'Rectangle', icon: IconRect },
+  ellipse: { label: 'Ellipse', icon: IconEllipse },
+  line: { label: 'Line', icon: IconLine },
+  arrow: { label: 'Arrow', icon: IconArrow },
+  pen: { label: 'Pen', icon: IconPen },
+  redact: { label: 'Redact', icon: IconRedact }
+};
 
 function resolvePdfjsDoc(resources, page) {
   if (page.source === 'self') return resources.pdfjsDoc;
@@ -15,6 +43,8 @@ const PADDING = 24;
 export default function Viewer() {
   const doc = useStore((s) => s.documents[s.activeId]);
   const setCurrentPage = useStore((s) => s.setCurrentPage);
+  const setViewMode = useStore((s) => s.setViewMode);
+  const rotatePage = useStore((s) => s.rotatePage);
   const wrapRef = useRef(null);
   const pageRefs = useRef({});
   const [containerSize, setContainerSize] = useState({ width: 800, height: 600 });
@@ -59,23 +89,53 @@ export default function Viewer() {
   if (!doc) return null;
 
   const pagesToShow = doc.viewMode === 'single' ? [doc.pages[doc.currentPage - 1]].filter(Boolean) : doc.pages;
+  const currentPageKey = doc.pages[doc.currentPage - 1]?.key;
+  const toolMeta = TOOL_META[doc.tool] || TOOL_META.select;
+  const ToolIcon = toolMeta.icon;
 
   return (
-    <div className="viewer-wrap" ref={wrapRef} onScroll={onScroll}>
-      <div className="viewer-pages" style={{ paddingTop: PADDING, paddingBottom: PADDING + 180 }}>
-        {pagesToShow.map((p) => {
-          const index = doc.pages.indexOf(p);
-          return (
-            <PageView
-              key={p.key}
-              doc={doc}
-              page={p}
-              index={index}
-              containerSize={containerSize}
-              registerRef={(el) => (pageRefs.current[index] = el)}
-            />
-          );
-        })}
+    <div className="viewer-wrap">
+      <div className="viewer-scroll" ref={wrapRef} onScroll={onScroll}>
+        <div className="viewer-pages" style={{ paddingTop: PADDING, paddingBottom: PADDING + 180 }}>
+          {pagesToShow.map((p) => {
+            const index = doc.pages.indexOf(p);
+            return (
+              <PageView
+                key={p.key}
+                doc={doc}
+                page={p}
+                index={index}
+                containerSize={containerSize}
+                registerRef={(el) => (pageRefs.current[index] = el)}
+              />
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="floating-dock">
+        <div className="dock-tool-pill">
+          <ToolIcon />
+          <span>{toolMeta.label}</span>
+        </div>
+        <div className="dock-divider" />
+        <div
+          className={`dock-btn ${doc.viewMode === 'single' ? 'active' : ''}`}
+          title="Single page"
+          onClick={() => setViewMode(doc.id, 'single')}
+        >
+          <IconSinglePage />
+        </div>
+        <div
+          className={`dock-btn ${doc.viewMode === 'continuous' ? 'active' : ''}`}
+          title="Continuous"
+          onClick={() => setViewMode(doc.id, 'continuous')}
+        >
+          <IconContinuous />
+        </div>
+        <div className="dock-btn" title="Rotate current page" onClick={() => currentPageKey && rotatePage(doc.id, currentPageKey, 90)}>
+          <IconRotateView />
+        </div>
       </div>
     </div>
   );

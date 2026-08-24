@@ -1,4 +1,4 @@
-# PDF Editor
+# Paperlight
 
 A lightweight, offline-by-default desktop PDF editor for Windows - view,
 edit, annotate, sign, and save PDFs, packaged as a single installable
@@ -48,10 +48,16 @@ Fonts.
 - **Saving** - Save / Save As, merge multiple PDFs, split by page range,
   export pages as PNG/JPG, and set/remove a PDF's open password with
   permission flags (print/edit/copy/annotate).
-- **UI** - toolbar grouped by function, sidebar (thumbnails/outline/
-  search/forms), properties panel for the selected object, light/dark
-  theme, lazy page rendering so large (100+ page) documents stay
-  responsive, and clear error/password prompts instead of silent
+- **UI** - custom frameless title bar (app mark, document tabs, window
+  controls) with a themed menu bar and grouped icon toolbar underneath;
+  an icon rail + collapsible, drag-resizable side panel (thumbnails/
+  outline/search/forms/layers); a floating view dock over the canvas
+  (current tool, single-page/continuous, rotate); a properties panel
+  that's contextual to the active tool even with nothing selected yet;
+  light/dark theme with three accent colors (lilac/orchid/periwinkle),
+  persisted across restarts; an empty-state drop zone with a real
+  Recent-files list; lazy page rendering so large (100+ page) documents
+  stay responsive; and clear error/password prompts instead of silent
   failures on corrupt or encrypted files.
 
 ## Tech stack
@@ -74,17 +80,27 @@ Fonts.
 pdf-editor/
 ├─ src/
 │  ├─ main/              Electron main process
-│  │  ├─ main.js         App lifecycle, window, all ipcMain handlers (file I/O, dialogs)
-│  │  ├─ menu.js          Application menu -> forwards actions to the renderer
+│  │  ├─ main.js         App lifecycle, frameless window, all ipcMain handlers (file I/O, dialogs, window controls)
 │  │  └─ signing.js        Digital signature creation + verification (node-forge, @signpdf)
 │  ├─ preload/
 │  │  └─ preload.js       contextBridge API exposed to the renderer as `window.pdfEditor`
 │  └─ renderer/           React app (loaded via Vite)
-│     ├─ App.jsx           Top-level shell: tabs, menu-action wiring, drag & drop, save flow
-│     ├─ components/       Toolbar, Sidebar, Viewer, AnnotationLayer, PropertiesPanel, Dialogs, StatusBar
+│     ├─ App.jsx           Top-level shell: menu-action dispatch + keyboard accelerators, drag & drop, save flow
+│     ├─ components/
+│     │  ├─ TitleBar.jsx     Frameless custom chrome: mark, doc tabs, minimize/maximize/close
+│     │  ├─ MenuBar.jsx      Themed File/Edit/Annotate/Sign/Page/View/Help dropdowns + theme/accent
+│     │  ├─ Toolbar.jsx      Grouped icon toolbar (file, history, tools, signing, zoom/page)
+│     │  ├─ Sidebar.jsx      Icon rail + resizable side panel (thumbnails/outline/search/forms/layers)
+│     │  ├─ Viewer.jsx       Page rendering + the floating view dock
+│     │  ├─ AnnotationLayer.jsx  Interactive overlay: click-to-edit text, shapes, marquee-select
+│     │  ├─ PropertiesPanel.jsx  Contextual to the active tool/selection
+│     │  ├─ Icons.jsx        Shared 20x20-grid stroke icon set
+│     │  ├─ PaperlightMark.jsx  The brand mark (see assets/brand/)
+│     │  ├─ Dialogs.jsx, StatusBar.jsx
 │     ├─ state/
-│     │  ├─ store.js       Zustand store: documents, tools, history (undo/redo), UI state
-│     │  └─ docResources.js  Non-serializable per-doc resources (pdf.js docs, raw bytes, fonts)
+│     │  ├─ store.js       Zustand store: documents, tools, history (undo/redo), UI state, theme/accent
+│     │  ├─ docResources.js  Non-serializable per-doc resources (pdf.js docs, raw bytes, fonts)
+│     │  └─ recentFiles.js   localStorage-backed "Recent" list for the empty state
 │     └─ pdf/
 │        ├─ documentIO.js  Open/bake/merge/split/export - the pdf-lib <-> app-state bridge
 │        ├─ security.js    RC4-128 Standard Security Handler (encrypt/decrypt)
@@ -98,10 +114,26 @@ pdf-editor/
 │  ├─ verify-encryption.mjs  Standalone round-trip test for security.js (see Testing)
 │  ├─ smoke-test.mjs         Headless Electron smoke test via Playwright
 │  └─ make-icons.mjs         Regenerates build/icon.png + build/icon.ico from scripts/icon.svg
+├─ assets/brand/          Paperlight brand assets (mark, wordmark, icon source) + their own README
 ├─ build/                 electron-builder resources (icon.ico / icon.png)
 ├─ vite.config.js
 └─ package.json           Scripts + electron-builder config (the "build" field)
 ```
+
+### Window chrome
+
+The window is frameless (`frame: false` in `main.js`) - `TitleBar.jsx` draws
+the icon/name, document tabs, and minimize/maximize/close entirely in the
+renderer, using `-webkit-app-region: drag`/`no-drag` for window dragging and
+an IPC round trip (`window:minimize` / `window:maximizeToggle` / `window:close`
+/ `window:isMaximized`, plus a `window:maximizedChange` push event) for the
+window-management calls a native frame would otherwise provide. There is no
+native application menu (`Menu.setApplicationMenu(null)`) - `MenuBar.jsx` is
+the only menu, and **all keyboard accelerators (Ctrl+O, Ctrl+S, ...) are
+handled by a renderer-side keydown listener in `App.jsx`**, not Electron's
+menu accelerator system: with the native menu bar hidden, its accelerators
+turned out not to reliably fire (confirmed empirically while building this),
+so the renderer owns them outright rather than treating that as a fallback.
 
 ## Setup
 
@@ -130,9 +162,9 @@ npm run dist:portable   # portable exe only
 
 Output goes to `release/`:
 
-- `PDF Editor Setup <version>.exe` - NSIS installer (user chooses install
+- `Paperlight Setup <version>.exe` - NSIS installer (user chooses install
   directory, creates Start Menu/Desktop shortcuts).
-- `PDF-Editor-Portable-<version>.exe` - single-file portable exe, no
+- `Paperlight-Portable-<version>.exe` - single-file portable exe, no
   installation required.
 
 Building for Windows works from Windows directly. **Building the Windows
@@ -140,8 +172,12 @@ target from Linux/macOS** requires [Wine](https://www.winehq.org/) (used by
 electron-builder to embed the icon/version info into the `.exe`) - e.g. on
 Ubuntu: `sudo dpkg --add-architecture i386 && sudo apt-get update && sudo apt-get install wine32:i386 wine64 wine`.
 
-To regenerate the app icon from `scripts/icon.svg`, run `node scripts/make-icons.mjs`
-(requires Playwright's Chromium, only needed if you change the icon design).
+`build/icon.ico` / `build/icon.png` are the production Paperlight app icon,
+straight from `assets/brand/` (see that folder's own README for the full
+brand kit - mark geometry, colors, wordmark, other sizes/variants). If you
+ever need to regenerate them from `scripts/icon.svg` instead (e.g. while
+iterating on the icon design before finalizing a brand asset drop), run
+`node scripts/make-icons.mjs` (requires Playwright's Chromium).
 
 ## Testing
 
@@ -154,7 +190,13 @@ validate the highest-risk, hand-rolled pieces:
   `removePasswordProtection` correctly strips protection.
 - `node scripts/smoke-test.mjs` - launches the real packaged app under
   Playwright/Xvfb, opens a generated PDF, and exercises the toolbar/canvas
-  to catch boot-time or render-time crashes.
+  to catch boot-time or render-time crashes; also confirms the frameless
+  title bar and menu bar render and that Ctrl+O actually reaches the
+  renderer's keyboard-accelerator handler (see "Window chrome" above).
+  Xvfb in this sandbox runs with no window manager at all, so minimize/
+  maximize can't be verified for a real state change here the way it can
+  on an actual Windows desktop - the smoke test only checks that the IPC
+  calls complete without throwing.
 
 ## Known limitations
 

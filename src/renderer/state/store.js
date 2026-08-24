@@ -10,6 +10,7 @@ import {
 import { setResource, getResource, deleteResource, addExternalSource, addExternalPdfjsDoc, addCustomFont } from './docResources';
 import { removePasswordProtection, UnsupportedEncryptionError, isStructurallyEncrypted } from '../pdf/security';
 import { placeImageFromDialog } from '../pdf/placeImage';
+import { addRecentFile } from './recentFiles';
 
 const MAX_HISTORY = 60;
 
@@ -54,8 +55,24 @@ const defaultToolOptions = {
   highlightColor: '#ffe066'
 };
 
+function readPersisted(key, fallback) {
+  try {
+    return localStorage.getItem(key) || fallback;
+  } catch {
+    return fallback;
+  }
+}
+function writePersisted(key, value) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    /* persistence is best-effort - theme/accent still work for this session */
+  }
+}
+
 export const useStore = create((set, get) => ({
-  theme: 'dark',
+  theme: readPersisted('paperlight:theme', 'dark'),
+  accent: readPersisted('paperlight:accent', 'lilac'),
   sidebarOpen: true,
   sidebarTab: 'thumbnails',
   documents: {},
@@ -67,7 +84,16 @@ export const useStore = create((set, get) => ({
   // ------------------------------------------------------------------
   // UI
   // ------------------------------------------------------------------
-  toggleTheme: () => set((s) => ({ theme: s.theme === 'dark' ? 'light' : 'dark' })),
+  toggleTheme: () =>
+    set((s) => {
+      const theme = s.theme === 'dark' ? 'light' : 'dark';
+      writePersisted('paperlight:theme', theme);
+      return { theme };
+    }),
+  setAccent: (accent) => {
+    writePersisted('paperlight:accent', accent);
+    set({ accent });
+  },
   setSidebarTab: (tab) => set({ sidebarTab: tab, sidebarOpen: true }),
   toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
   openDialog: (type, props) => set({ dialog: { type, props: props || {} } }),
@@ -97,6 +123,10 @@ export const useStore = create((set, get) => ({
     const id = uuid();
     const pages = await buildPageMeta(pdfjsDoc);
     const outline = await buildOutline(pdfjsDoc);
+    const pdfVersion = await pdfjsDoc
+      .getMetadata()
+      .then((m) => m.info?.PDFFormatVersion || null)
+      .catch(() => null);
 
     let editableBytes = fileMeta.data;
     let editingUnsupported = false;
@@ -145,6 +175,8 @@ export const useStore = create((set, get) => ({
       id,
       name: fileMeta.name,
       filePath: fileMeta.path || null,
+      pdfVersion,
+      fileSize: fileMeta.data.length,
       isEncrypted: structurallyEncrypted,
       password: password || null,
       pageCount: pages.length,
@@ -175,6 +207,7 @@ export const useStore = create((set, get) => ({
       activeId: id
     }));
     get().closeDialog();
+    if (fileMeta.path) addRecentFile({ name: fileMeta.name, path: fileMeta.path, pageCount: pages.length });
     return id;
   },
 
