@@ -115,7 +115,9 @@ export default function App() {
           }
         }
       } catch (err) {
-        showToast('error', `Save failed: ${err.message}`);
+        console.error('Save failed:', err);
+        const reason = err && err.message ? err.message : 'an unknown error occurred';
+        showToast('error', `Save failed: ${reason}`);
       }
     },
     [showToast, updateDoc]

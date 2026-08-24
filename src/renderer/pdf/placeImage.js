@@ -14,11 +14,28 @@ import { v4 as uuid } from 'uuid';
  * behind it.
  */
 
-const MIME_BY_EXT = {
-  png: 'image/png',
-  jpg: 'image/jpeg',
-  jpeg: 'image/jpeg'
-};
+/**
+ * Determines the real image format from its magic bytes rather than the
+ * file's extension/name. A file's extension can lie - renamed files,
+ * screenshots saved with the wrong suffix, images downloaded from chat
+ * apps - and Chromium's own `<img>` tag doesn't care, sniffing the actual
+ * bytes instead. pdf-lib's embedder does the opposite: it trusts whatever
+ * MIME the data URL claims and parses strictly to that format, so an
+ * extension that lied produced a live preview that looked fine right up
+ * until Save, which failed with a bare "undefined" (pdf-lib's PNG decoder
+ * throws on non-PNG bytes with no meaningful `.message`). Sniffing here
+ * makes the data URL's declared MIME match its real content, so both the
+ * preview and the save path agree from the start.
+ */
+function sniffImageMime(bytes) {
+  if (bytes.length >= 8 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47 && bytes[4] === 0x0d && bytes[5] === 0x0a && bytes[6] === 0x1a && bytes[7] === 0x0a) {
+    return 'image/png';
+  }
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+    return 'image/jpeg';
+  }
+  return null;
+}
 
 function bytesToDataUrl(bytes, mime) {
   let binary = '';
@@ -57,14 +74,14 @@ export async function placeImageFromDialog(docId, pageKey, x, y, addAnnotation, 
   }
   if (!file) return; // user cancelled
 
-  const ext = (file.name.split('.').pop() || '').toLowerCase();
-  const mime = MIME_BY_EXT[ext];
+  const bytes = new Uint8Array(file.data);
+  const mime = sniffImageMime(bytes);
   if (!mime) {
-    showToast('error', 'Only PNG and JPG images can be inserted.');
+    showToast('error', 'That file is not a valid PNG or JPG (its content did not match either format).');
     return;
   }
 
-  const dataUrl = bytesToDataUrl(new Uint8Array(file.data), mime);
+  const dataUrl = bytesToDataUrl(bytes, mime);
   let dims;
   try {
     dims = await measure(dataUrl);

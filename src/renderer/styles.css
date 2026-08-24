@@ -157,13 +157,15 @@ button {
   white-space: nowrap;
 }
 .titlebar-tabs {
+  /* drag (inherited from .titlebar), not no-drag: with few/no tabs open
+     most of this flex:1 region is empty title-bar space that should still
+     move the window. Only the tab pills and the "+" button opt out. */
   flex: 1;
   display: flex;
   align-items: flex-end;
   gap: 2px;
   min-width: 0;
   padding-right: 12px;
-  -webkit-app-region: no-drag;
 }
 .doctab {
   display: flex;
@@ -177,6 +179,7 @@ button {
   max-width: 230px;
   cursor: pointer;
   transition: background-color 140ms ease-out, color 140ms ease-out;
+  -webkit-app-region: no-drag;
 }
 .doctab:hover {
   background: var(--surface2);
@@ -220,6 +223,7 @@ button {
   font-size: 15px;
   flex-shrink: 0;
   transition: background-color 140ms ease-out, color 140ms ease-out;
+  -webkit-app-region: no-drag;
 }
 .doctab-new:hover {
   background: var(--surface2);
@@ -259,6 +263,10 @@ button {
   border-bottom: 1px solid var(--border);
   position: relative;
   z-index: 40;
+  /* A sibling of .titlebar, not a descendant, so it needs its own drag
+     region rather than inheriting one - same empty-space-is-draggable
+     reasoning as .titlebar-tabs above. */
+  -webkit-app-region: drag;
 }
 .menubar-item {
   padding: 5px 10px;
@@ -268,6 +276,7 @@ button {
   cursor: pointer;
   transition: background-color 140ms ease-out, color 140ms ease-out;
   position: relative;
+  -webkit-app-region: no-drag;
 }
 .menubar-item:hover,
 .menubar-item.open {
@@ -285,6 +294,7 @@ button {
   padding: 6px;
   box-shadow: var(--shadow);
   z-index: 50;
+  -webkit-app-region: no-drag;
 }
 .menubar-dropdown-item {
   display: flex;
@@ -334,6 +344,7 @@ button {
   font-size: 12px;
   cursor: pointer;
   transition: border-color 140ms ease-out, color 140ms ease-out;
+  -webkit-app-region: no-drag;
 }
 .theme-pill:hover {
   border-color: var(--accent-line);
@@ -349,6 +360,7 @@ button {
   color: var(--dim);
   cursor: pointer;
   transition: background-color 140ms ease-out, color 140ms ease-out;
+  -webkit-app-region: no-drag;
 }
 .settings-btn:hover,
 .settings-btn.open {
@@ -369,6 +381,7 @@ button {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  -webkit-app-region: no-drag;
 }
 .settings-label {
   font-size: 11px;

@@ -193,6 +193,27 @@ async function main() {
     'a single Image-button click inserts an image (no second click needed)'
   );
 
+  // --- mislabeled image: real JPEG bytes under a .png filename ----------
+  // A file's extension can lie (renamed files, chat-app downloads, ...);
+  // the live preview never cared (the browser sniffs actual content for
+  // <img>), but the save path used to trust the extension-derived MIME
+  // blindly and crash with an unhelpful "Save failed: undefined" once
+  // pdf-lib tried to parse JPEG bytes as PNG. placeImage.js now sniffs the
+  // real magic bytes instead.
+  const jpegAsPngPath = path.join(os.tmpdir(), `smoke-mislabeled-${Date.now()}.png`);
+  const tinyJpegB64 =
+    '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAMCAgICAgMCAgIDAwMDBAYEBAQEBAgGBgUGCQgKCgkICQkKDA8MCgsOCwkJDRENDg8QEBEQCgwSExIQEw8QEBD/2wBDAQMDAwQDBAgEBAgQCwkLEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBD/wAARCAAEAAQDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAj/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAAAAX/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIRAxEAPwCdABmX/9k=';
+  await fs.writeFile(jpegAsPngPath, Buffer.from(tinyJpegB64, 'base64'));
+  await app.evaluate(({ dialog }, target) => {
+    dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [target] });
+  }, jpegAsPngPath);
+  await win.locator('.tcbtn[title="Insert an image (PNG/JPG)"]').click();
+  await win.waitForTimeout(1000);
+  assert(
+    (await win.locator('.page-overlay img').count()) === 2,
+    'a JPEG mislabeled with a .png extension still inserts (sniffed by content, not trusted by name)'
+  );
+
   await win.screenshot({ path: path.join(root, 'scratch-after-edits.png') });
 
   // --- real Save As, via a monkey-patched dialog so no UI is needed ----
@@ -228,6 +249,7 @@ async function main() {
 
   await fs.unlink(savePath).catch(() => {});
   await fs.unlink(imgPath).catch(() => {});
+  await fs.unlink(jpegAsPngPath).catch(() => {});
 
   await app.close();
 

@@ -176,12 +176,46 @@ function wrapText(font, text, fontSize, maxWidth) {
   return lines;
 }
 
+/** True source of truth is the bytes, not whatever MIME a data URL claims
+ * to be - a caller's declared type can be wrong (see placeImage.js's
+ * sniffImageMime for the concrete case that motivated this: a file whose
+ * extension lied about its real format). Embedding by sniffed content
+ * keeps this correct even if that ever happens again from some other
+ * caller (e.g. the visual-signature upload, which trusts the OS-reported
+ * File.type instead). */
+function isPngBytes(bytes) {
+  return (
+    bytes.length >= 8 &&
+    bytes[0] === 0x89 &&
+    bytes[1] === 0x50 &&
+    bytes[2] === 0x4e &&
+    bytes[3] === 0x47 &&
+    bytes[4] === 0x0d &&
+    bytes[5] === 0x0a &&
+    bytes[6] === 0x1a &&
+    bytes[7] === 0x0a
+  );
+}
+function isJpegBytes(bytes) {
+  return bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+}
+
 async function embedImageForDataUrl(outDoc, cache, dataUrl) {
   if (cache.has(dataUrl)) return cache.get(dataUrl);
-  const isPng = dataUrl.startsWith('data:image/png');
   const base64 = dataUrl.split(',')[1];
   const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
-  const embedded = isPng ? await outDoc.embedPng(bytes) : await outDoc.embedJpg(bytes);
+  let embedded;
+  try {
+    if (isPngBytes(bytes)) embedded = await outDoc.embedPng(bytes);
+    else if (isJpegBytes(bytes)) embedded = await outDoc.embedJpg(bytes);
+    else throw new Error('the file is not a PNG or JPG');
+  } catch (err) {
+    // Never let a message-less error (some decoders throw non-Error
+    // values, or Errors with an empty .message on malformed input) reach
+    // the user as a bare "Save failed: undefined".
+    const cause = err && err.message ? err.message : String(err);
+    throw new Error(`Could not embed an inserted image (${cause}).`);
+  }
   cache.set(dataUrl, embedded);
   return embedded;
 }
