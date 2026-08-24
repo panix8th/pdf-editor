@@ -139,6 +139,10 @@ export async function extractTextRuns(pdfPage) {
 export function guessStandardFamily(hint) {
   const h = (hint || '').toLowerCase();
   if (h.includes('courier') || h.includes('mono')) return 'Courier';
-  if (h.includes('times') || h.includes('serif') || h.includes('georgia') || h.includes('garamond')) return 'TimesRoman';
+  // "sans-serif" contains "serif" as a substring, so sans-serif fonts have
+  // to be excluded explicitly or they'd wrongly map to a serif fallback.
+  if (!h.includes('sans') && (h.includes('times') || h.includes('serif') || h.includes('georgia') || h.includes('garamond'))) {
+    return 'TimesRoman';
+  }
   return 'Helvetica';
 }

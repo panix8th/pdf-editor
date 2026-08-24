@@ -160,19 +160,22 @@ validate the highest-risk, hand-rolled pieces:
   holds for the vast majority of real PDFs but can occasionally mismatch
   on documents with unusual kerning-adjustment structures - the color/font
   picker in the properties panel is always right there to fix it.
-- **System font access** (the "System Fonts..." picker) needs Chromium's
-  Local Font Access API, which requires the user to grant permission the
-  first time it's used; if it's unavailable or denied, "Load .ttf/.otf..."
+- **Automatic font matching for click-to-edit-text** tries, in order: (1)
+  the exact original font if it's already installed on this PC (via
+  Chromium's Local Font Access API - no network, no substitute, the real
+  glyphs; this is why editing a Word-exported PDF on Windows usually
+  matches Calibri/Cambria/Segoe UI/Arial/Times New Roman/Courier New
+  perfectly, since those ship with Windows), (2) that same name against
+  the live Google Fonts catalog, (3) a metric-compatible substitute for
+  common proprietary fonts Google Fonts doesn't have at all. None of this
+  is a fixed lookup list for step 1/2 - any installed or Google-hosted
+  font resolves correctly on its own. Only a font that's in neither place
+  falls back to the closest built-in standard font (still editable
+  immediately either way - matching happens in the background and never
+  blocks the edit). Local Font Access needs the user to grant permission
+  the first time it's used; if it's unavailable/denied, "Load .ttf/.otf..."
   and "Google Fonts..." still work as direct fallbacks.
-- **Google Fonts matching** tries the PDF's exact font name against the
-  live Google Fonts catalog first, then a metric-compatible substitute
-  table for common proprietary fonts it doesn't have at all (Arial,
-  Calibri, Times New Roman, ...) - it isn't a fixed list, so most fonts
-  that are genuinely on Google Fonts resolve correctly even if not
-  explicitly named in the substitute table. A font that's neither on
-  Google Fonts nor in that table falls back to the closest built-in
-  standard font (still editable immediately - the fetch attempt never
-  blocks anything). The same "Google Fonts..." picker is also available
+- The "System Fonts..." and "Google Fonts..." pickers are also available
   directly from the toolbar/properties panel to fetch any font by name,
   independent of auto-detection.
 - **Password protection** implements the classic PDF **RC4 128-bit**

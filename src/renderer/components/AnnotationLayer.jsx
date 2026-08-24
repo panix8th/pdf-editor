@@ -13,6 +13,8 @@ import { isCustomFont } from '../pdf/fonts';
 import { extractTextRuns, guessStandardFamily } from '../pdf/textRuns';
 import { resolveGoogleFontCandidates } from '../pdf/googleFontMap';
 import { resolveAndCacheGoogleFont } from '../pdf/fetchAndCacheGoogleFont';
+import { findAndLoadSystemFont } from '../pdf/systemFontMatch';
+import { getCachedResolvedFontId, cacheResolvedFontId } from '../state/docResources';
 
 const BOX_TOOLS = new Set(['rect', 'highlight', 'redact']);
 const LINE_TOOLS = new Set(['line', 'arrow']);
@@ -120,16 +122,37 @@ export default function AnnotationLayer({ doc, page, pageIndex, pdfPage, scale, 
     });
     setEditingId(id);
 
-    const candidates = resolveGoogleFontCandidates(run.realFontName, run.fontFamilyHint);
-    if (candidates.length === 0) return;
-    resolveAndCacheGoogleFont(doc.id, candidates, { bold: run.bold, italic: run.italic, registerCustomFont })
-      .then((match) => {
-        if (match) updateAnnotation(doc.id, page.key, id, { fontFamily: match.fontFamily, fontId: match.fontId }, { record: false });
-        // Otherwise offline, none of the candidates exist on Google Fonts,
-        // or the request timed out - the annotation already has a
-        // sensible offline fallback font.
-      })
-      .catch(() => {});
+    // Try to upgrade from the instant offline guess to the real font, best
+    // match first: (1) the exact font already installed on this PC - no
+    // network, no substitute, the actual original glyphs; (2) failing
+    // that, Google Fonts (exact name, then a metric-compatible
+    // substitute). Never blocks the edit either way.
+    (async () => {
+      const sysCacheKey = `sys:${run.realFontName || run.fontFamilyHint}:${run.bold}:${run.italic}`;
+      const cachedSysFontId = getCachedResolvedFontId(doc.id, sysCacheKey);
+      if (cachedSysFontId) {
+        const cachedName = doc.customFontsList.find((f) => f.id === cachedSysFontId)?.name;
+        if (cachedName) {
+          updateAnnotation(doc.id, page.key, id, { fontFamily: cachedName, fontId: cachedSysFontId }, { record: false });
+          return;
+        }
+      }
+      const sysMatch = await findAndLoadSystemFont(run.realFontName, run.fontFamilyHint, { bold: run.bold, italic: run.italic }).catch(() => null);
+      if (sysMatch) {
+        const fontId = `sysfont-${sysMatch.family}-${Date.now()}`;
+        registerCustomFont(doc.id, fontId, sysMatch.bytes, sysMatch.family);
+        cacheResolvedFontId(doc.id, sysCacheKey, fontId);
+        updateAnnotation(doc.id, page.key, id, { fontFamily: sysMatch.family, fontId }, { record: false });
+        return;
+      }
+
+      const candidates = resolveGoogleFontCandidates(run.realFontName, run.fontFamilyHint);
+      if (candidates.length === 0) return;
+      const match = await resolveAndCacheGoogleFont(doc.id, candidates, { bold: run.bold, italic: run.italic, registerCustomFont }).catch(() => null);
+      if (match) updateAnnotation(doc.id, page.key, id, { fontFamily: match.fontFamily, fontId: match.fontId }, { record: false });
+      // Otherwise offline, no match anywhere, or a request timed out - the
+      // annotation already has a sensible offline fallback font.
+    })();
   };
 
   const commitNewShape = useCallback(

@@ -29,9 +29,10 @@ const METRIC_COMPATIBLE = {
 
 /** Strips subset tags ("ABCDEF+"), weight/style suffixes, and common
  * PostScript naming artifacts down to a bare family name for matching. */
-function normalize(name) {
+export function normalize(name) {
   return (name || '')
-    .replace(/^[A-Z]{6}\+/, '') // subset prefix, e.g. "ABCDEF+Arial"
+    .replace(/^[A-Z]{6}\+/, '') // subset prefix (PDF spec convention), e.g. "ABCDEF+Arial"
+    .replace(/-\d+$/, '') // subset suffix (pdf-lib/fontkit convention), e.g. "DejaVuSans-9742"
     .replace(/[-,]?\s?(MT|PS|PSMT)$/i, '')
     .replace(/[-,]?\s?(Bold|Italic|Oblique|Regular|Light|Medium|Semibold|Black)+$/gi, '')
     .replace(/[-_]/g, ' ')

@@ -1,4 +1,4 @@
-import { getCachedGoogleFontId, cacheGoogleFontId } from '../state/docResources';
+import { getCachedResolvedFontId, cacheResolvedFontId } from '../state/docResources';
 
 /**
  * Tries each candidate Google Fonts family name in order (via the main
@@ -13,15 +13,15 @@ import { getCachedGoogleFontId, cacheGoogleFontId } from '../state/docResources'
 export async function resolveAndCacheGoogleFont(docId, candidates, { bold, italic, registerCustomFont }) {
   for (const family of candidates) {
     if (!family) continue;
-    const cacheKey = `${family}:${bold}:${italic}`;
-    const cachedFontId = getCachedGoogleFontId(docId, cacheKey);
+    const cacheKey = `gf:${family}:${bold}:${italic}`;
+    const cachedFontId = getCachedResolvedFontId(docId, cacheKey);
     if (cachedFontId) return { fontFamily: family, fontId: cachedFontId };
     try {
       const result = await window.pdfEditor.fetchGoogleFont(family, bold, italic);
       if (result.ok) {
         const fontId = `gfont-${family}-${Date.now()}`;
         registerCustomFont(docId, fontId, result.data, family);
-        cacheGoogleFontId(docId, cacheKey, fontId);
+        cacheResolvedFontId(docId, cacheKey, fontId);
         return { fontFamily: family, fontId };
       }
     } catch {
