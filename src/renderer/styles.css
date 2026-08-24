@@ -195,6 +195,57 @@ textarea {
   padding: 5px 3px;
 }
 
+/* ---------- Tool options bar ---------- */
+.tool-options-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+.tob-label {
+  color: var(--text-2);
+  font-size: 11px;
+  margin-left: 6px;
+}
+.field-sm {
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 5px 6px;
+  color: var(--text-0);
+}
+.field-sm.num {
+  width: 52px;
+  text-align: center;
+}
+.field-sm.swatch {
+  width: 30px;
+  padding: 2px;
+}
+.font-list {
+  max-height: 320px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-top: 8px;
+}
+.font-list-item {
+  padding: 9px 12px;
+  cursor: pointer;
+  font-size: 16px;
+  border-bottom: 1px solid var(--border);
+}
+.font-list-item:last-child {
+  border-bottom: none;
+}
+.font-list-item:hover {
+  background: var(--bg-3);
+}
+
 /* ---------- Layout ---------- */
 .main-area {
   flex: 1;
@@ -260,6 +311,13 @@ textarea {
 .page-overlay {
   position: absolute;
   inset: 0;
+}
+.text-hit-target {
+  cursor: text;
+}
+.text-hit-target:hover {
+  outline: 1px dashed var(--accent);
+  background: rgba(79, 140, 255, 0.08);
 }
 .page-label {
   text-align: center;
@@ -444,6 +502,52 @@ textarea.field {
 }
 .search-highlight.active {
   background: rgba(255, 140, 0, 0.6);
+}
+
+/* ---------- Layers panel ---------- */
+.layer-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 7px 8px;
+  border-radius: var(--radius);
+  border: 1px solid transparent;
+  cursor: grab;
+  margin-bottom: 4px;
+  color: var(--text-1);
+}
+.layer-row:hover {
+  background: var(--bg-2);
+}
+.layer-row.active {
+  border-color: var(--accent);
+  color: var(--text-0);
+  background: var(--bg-2);
+}
+.layer-row-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.layer-row-actions {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+}
+.layer-row-actions button {
+  background: none;
+  border: none;
+  color: var(--text-2);
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 3px;
+  font-size: 12px;
+}
+.layer-row-actions button:hover {
+  color: var(--text-0);
+  background: var(--bg-3);
 }
 
 /* ---------- Forms panel ---------- */

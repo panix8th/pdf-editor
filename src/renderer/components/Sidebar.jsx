@@ -6,8 +6,21 @@ const TABS = [
   { id: 'thumbnails', label: 'Pages' },
   { id: 'outline', label: 'Outline' },
   { id: 'search', label: 'Search' },
-  { id: 'forms', label: 'Forms' }
+  { id: 'forms', label: 'Forms' },
+  { id: 'layers', label: 'Layers' }
 ];
+
+const TYPE_LABELS = {
+  text: 'Text',
+  image: 'Image',
+  signature: 'Signature',
+  rect: 'Rectangle',
+  line: 'Line',
+  arrow: 'Arrow',
+  pen: 'Pen',
+  highlight: 'Highlight',
+  redact: 'Redaction'
+};
 
 export default function Sidebar() {
   const sidebarOpen = useStore((s) => s.sidebarOpen);
@@ -32,6 +45,7 @@ export default function Sidebar() {
         {doc && sidebarTab === 'outline' && <Outline doc={doc} />}
         {doc && sidebarTab === 'search' && <SearchPanel doc={doc} />}
         {doc && sidebarTab === 'forms' && <FormsPanel doc={doc} />}
+        {doc && sidebarTab === 'layers' && <LayersPanel doc={doc} />}
       </div>
     </div>
   );
@@ -306,6 +320,76 @@ function FormsPanel({ doc }) {
         );
       })}
       <div className="hint">Field values are baked in the next time you save.</div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+
+/** Shows the current page's objects top-to-bottom (front layer first, like
+ * a typical design tool), draggable to reorder - array order is paint
+ * order, so this is a direct "what's over what" control. */
+function LayersPanel({ doc }) {
+  const selectObject = useStore((s) => s.selectObject);
+  const deleteAnnotation = useStore((s) => s.deleteAnnotation);
+  const reorderAnnotations = useStore((s) => s.reorderAnnotations);
+  const moveAnnotationLayer = useStore((s) => s.moveAnnotationLayer);
+  const dragIndex = useRef(null);
+
+  const page = doc.pages[doc.currentPage - 1];
+  const pageKey = page?.key;
+  const list = pageKey ? doc.annotations[pageKey] || [] : [];
+  const frontToBack = [...list].reverse();
+
+  if (!pageKey) return <div className="outline-empty">No page selected.</div>;
+  if (list.length === 0) return <div className="outline-empty">No objects on this page yet. Add text, shapes, or images to see them here.</div>;
+
+  const onDragStart = (frontIdx) => (e) => {
+    dragIndex.current = frontIdx;
+    e.dataTransfer.effectAllowed = 'move';
+  };
+  const onDrop = (frontIdx) => (e) => {
+    e.preventDefault();
+    const from = dragIndex.current;
+    if (from === null || from === frontIdx) return;
+    const reordered = [...frontToBack];
+    const [moved] = reordered.splice(from, 1);
+    reordered.splice(frontIdx, 0, moved);
+    reorderAnnotations(doc.id, pageKey, [...reordered].reverse());
+    dragIndex.current = null;
+  };
+
+  return (
+    <div>
+      <div className="hint" style={{ marginBottom: 8 }}>
+        Top of the list is drawn on top. Drag to reorder.
+      </div>
+      {frontToBack.map((a, i) => {
+        const isSelected = doc.selection?.pageKey === pageKey && doc.selection?.objectId === a.id;
+        return (
+          <div
+            key={a.id}
+            className={`layer-row ${isSelected ? 'active' : ''}`}
+            draggable
+            onDragStart={onDragStart(i)}
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={onDrop(i)}
+            onClick={() => selectObject(doc.id, pageKey, a.id)}
+          >
+            <span className="layer-row-label">
+              {TYPE_LABELS[a.type] || a.type}
+              {a.type === 'text' && a.text ? `: ${a.text.slice(0, 18)}` : ''}
+            </span>
+            <div className="layer-row-actions">
+              <button title="Bring to front" onClick={(e) => { e.stopPropagation(); moveAnnotationLayer(doc.id, pageKey, a.id, 'front'); }}>⤒</button>
+              <button title="Move forward" onClick={(e) => { e.stopPropagation(); moveAnnotationLayer(doc.id, pageKey, a.id, 'forward'); }}>↑</button>
+              <button title="Move backward" onClick={(e) => { e.stopPropagation(); moveAnnotationLayer(doc.id, pageKey, a.id, 'backward'); }}>↓</button>
+              <button title="Send to back" onClick={(e) => { e.stopPropagation(); moveAnnotationLayer(doc.id, pageKey, a.id, 'back'); }}>⤓</button>
+              <button title="Delete" onClick={(e) => { e.stopPropagation(); deleteAnnotation(doc.id, pageKey, a.id); }}>✕</button>
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }

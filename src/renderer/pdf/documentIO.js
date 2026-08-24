@@ -17,7 +17,12 @@ export const PASSWORD_REQUIRED = 'PASSWORD_REQUIRED';
  */
 export async function openWithPdfJs(bytes, password) {
   const loadingTask = pdfjsLib.getDocument({
-    data: bytes,
+    // pdf.js may transfer/detach the underlying ArrayBuffer to its worker
+    // for zero-copy performance, which would silently zero out `bytes` for
+    // every other caller still holding a reference to it (this is exactly
+    // what caused "No PDF header found" on save - pdf-lib got handed an
+    // emptied buffer). Always hand pdf.js an independent copy.
+    data: bytes.slice(),
     password: password || undefined,
     // Fully offline: never let pdf.js fetch external resources (fonts, ICC
     // profiles, etc.) over the network.
@@ -203,6 +208,14 @@ async function drawAnnotation(ctx, page, ann, pageHeight) {
     case 'text': {
       const font = await getFontFor(ctx, ann);
       const box = storageRectToPdfLib({ x: ann.x, y: ann.y, w: ann.w, h: ann.h }, pageHeight);
+      // Editing existing PDF text works by covering the original run (its
+      // real glyphs still live in the content stream - there's no portable
+      // way to rewrite that in place) with the sampled background color,
+      // then drawing the edited text on top in the same spot.
+      if (ann.coverRect) {
+        const coverBox = storageRectToPdfLib(ann.coverRect, pageHeight);
+        page.drawRectangle({ x: coverBox.x, y: coverBox.y, width: coverBox.w, height: coverBox.h, color: hexToRgb(ann.coverColor || '#ffffff') });
+      }
       const size = ann.fontSize || 14;
       const lineHeight = size * 1.25;
       const lines = wrapText(font, ann.text || '', size, box.w);

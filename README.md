@@ -12,13 +12,20 @@ telemetry, no network access - everything runs on your machine.
   single-page scrolling, zoom / fit-width / fit-page, page-number jump,
   thumbnail sidebar with drag-to-reorder, clickable outline/bookmarks,
   full-text search with highlighting and next/previous navigation.
-- **Editing** - text boxes (font family/size/color/bold/italic/alignment,
-  with embedded standard fonts and custom `.ttf`/`.otf` loading), images,
-  rectangles, lines, arrows, freehand pen, highlights, and a redaction
-  tool that rasterizes the affected page so the underlying content is
-  genuinely removed, not just covered. Insert/delete/duplicate/rotate/
-  reorder pages, insert pages from another PDF. Undo/redo and standard
-  shortcuts (Ctrl+Z/Y, Ctrl+S, Ctrl+O, Ctrl+F, Delete, ...).
+- **Editing** - click directly on existing PDF text to edit it in place
+  (the original run is covered with its sampled background color and the
+  edit drawn on top - PDF has no portable way to rewrite a content stream
+  in place, so this is the same approach every lightweight editor uses),
+  plus new text boxes (font family/size/color/bold/italic/alignment,
+  standard fonts, any font installed on your PC via the Local Font Access
+  picker, or a loaded `.ttf`/`.otf`), images, rectangles, lines, arrows,
+  freehand pen, highlights, and a redaction tool that rasterizes the
+  affected page so the underlying content is genuinely removed, not just
+  covered. A Layers panel shows every object on the page top-to-bottom
+  (paint order) with drag-to-reorder and front/forward/backward/back
+  controls. Insert/delete/duplicate/rotate/reorder pages, insert pages
+  from another PDF. Undo/redo and standard shortcuts (Ctrl+Z/Y, Ctrl+S,
+  Ctrl+O, Ctrl+F, Delete, ...).
 - **Forms** - detects existing AcroForm fields (text, checkbox, radio,
   dropdown) and fills them from a side panel.
 - **Signing** - visual signatures (draw / type / upload an image, then
@@ -136,6 +143,18 @@ validate the highest-risk, hand-rolled pieces:
 
 ## Known limitations
 
+- **Editing existing text** covers the original run (background-color
+  sampled from the rendered page) and draws the edit on top, rather than
+  rewriting the PDF's content stream - there's no portable, general way to
+  do the latter. It's click-target granularity is per text run as pdf.js
+  reports them, which is usually a word or short phrase rather than an
+  entire sentence.
+- **System font access** (the "System Fonts..." picker) needs Chromium's
+  Local Font Access API, which requires the user to grant permission the
+  first time it's used; if it's unavailable or denied, "Load .ttf/.otf..."
+  still works as a direct fallback. Fetching fonts from Google Fonts was
+  intentionally not implemented, since it would require network access
+  this app otherwise never makes.
 - **Password protection** implements the classic PDF **RC4 128-bit**
   Standard Security Handler (opens in every mainstream reader). Removing/
   editing a password-protected PDF that uses **AES** encryption (common

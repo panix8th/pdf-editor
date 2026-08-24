@@ -2,6 +2,7 @@ import React, { useEffect, useCallback, useRef, useState } from 'react';
 import { useStore, getResource } from './state/store';
 import { bakeDocument } from './pdf/documentIO';
 import Toolbar from './components/Toolbar.jsx';
+import ToolOptionsBar from './components/ToolOptionsBar.jsx';
 import Sidebar from './components/Sidebar.jsx';
 import Viewer from './components/Viewer.jsx';
 import PropertiesPanel from './components/PropertiesPanel.jsx';
@@ -272,6 +273,7 @@ export default function App() {
       </div>
 
       <Toolbar onOpen={handleOpenDialog} onSave={() => doSave(false)} onSaveAs={() => doSave(true)} />
+      <ToolOptionsBar />
 
       <div className="main-area">
         <Sidebar />
@@ -288,7 +290,7 @@ export default function App() {
             </div>
           </div>
         )}
-        {activeDoc && (activeDoc.selection || activeDoc.tool !== 'select') && <PropertiesPanel />}
+        {activeDoc && activeDoc.selection && <PropertiesPanel />}
       </div>
 
       <StatusBar />

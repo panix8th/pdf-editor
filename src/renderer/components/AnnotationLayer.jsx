@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState, useCallback } from 'react';
+import React, { useMemo, useRef, useState, useCallback, useEffect } from 'react';
 import { Rnd } from 'react-rnd';
 import { v4 as uuid } from 'uuid';
 import { useStore } from '../state/store';
@@ -10,9 +10,57 @@ import {
   screenDeltaToStorage
 } from '../pdf/coords';
 import { isCustomFont } from '../pdf/fonts';
+import { extractTextRuns, guessStandardFamily } from '../pdf/textRuns';
 
 const BOX_TOOLS = new Set(['rect', 'highlight', 'redact']);
 const LINE_TOOLS = new Set(['line', 'arrow']);
+
+function rgbToHex(r, g, b) {
+  return '#' + [r, g, b].map((v) => Math.max(0, Math.min(255, v)).toString(16).padStart(2, '0')).join('');
+}
+
+/** Approximates the original run's text/background color by sampling the
+ * already-rendered page canvas, since we don't have the PDF's actual paint
+ * operators for this text - just its position. */
+function sampleRunColors(canvas, screenRect) {
+  try {
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    const bgPoints = [
+      [screenRect.x + 2, screenRect.y - 3],
+      [screenRect.x + screenRect.w - 2, screenRect.y - 3]
+    ];
+    let br = 0, bg = 0, bb = 0, bn = 0;
+    for (const [px, py] of bgPoints) {
+      const x = Math.max(0, Math.min(canvas.width - 1, Math.round(px)));
+      const y = Math.max(0, Math.min(canvas.height - 1, Math.round(py)));
+      const d = ctx.getImageData(x, y, 1, 1).data;
+      br += d[0]; bg += d[1]; bb += d[2]; bn++;
+    }
+    const bgColor = rgbToHex(br / bn, bg / bn, bb / bn);
+
+    let darkest = null;
+    let darkestLuma = Infinity;
+    const cols = 6, rows = 3;
+    for (let i = 0; i < cols; i++) {
+      for (let j = 0; j < rows; j++) {
+        const px = Math.round(screenRect.x + ((i + 0.5) / cols) * screenRect.w);
+        const py = Math.round(screenRect.y + ((j + 0.5) / rows) * screenRect.h);
+        const x = Math.max(0, Math.min(canvas.width - 1, px));
+        const y = Math.max(0, Math.min(canvas.height - 1, py));
+        const d = ctx.getImageData(x, y, 1, 1).data;
+        const luma = 0.299 * d[0] + 0.587 * d[1] + 0.114 * d[2];
+        if (luma < darkestLuma) {
+          darkestLuma = luma;
+          darkest = d;
+        }
+      }
+    }
+    const fgColor = darkest ? rgbToHex(darkest[0], darkest[1], darkest[2]) : '#000000';
+    return { bg: bgColor, fg: fgColor };
+  } catch {
+    return { bg: '#ffffff', fg: '#000000' };
+  }
+}
 
 export default function AnnotationLayer({ doc, page, pageIndex, pdfPage, scale, rotation, pxW, pxH }) {
   const overlayRef = useRef(null);
@@ -28,6 +76,7 @@ export default function AnnotationLayer({ doc, page, pageIndex, pdfPage, scale, 
   const toolOptions = doc.toolOptions;
   const [draft, setDraft] = useState(null);
   const [editingId, setEditingId] = useState(null);
+  const [textRuns, setTextRuns] = useState([]);
 
   const liveViewport = useMemo(() => pdfPage.getViewport({ scale, rotation }), [pdfPage, scale, rotation]);
 
@@ -36,6 +85,47 @@ export default function AnnotationLayer({ doc, page, pageIndex, pdfPage, scale, 
   const getOffset = (e) => {
     const rect = overlayRef.current.getBoundingClientRect();
     return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+  };
+
+  // Lets the "select" tool double as an "edit existing text" tool: extract
+  // every text run on this page once so we can offer them as click targets.
+  useEffect(() => {
+    if (pdfPage.isFake) {
+      setTextRuns([]);
+      return;
+    }
+    let cancelled = false;
+    extractTextRuns(pdfPage).then((runs) => !cancelled && setTextRuns(runs));
+    return () => {
+      cancelled = true;
+    };
+  }, [pdfPage]);
+
+  const onTextRunClick = (run) => (e) => {
+    e.stopPropagation();
+    if (tool !== 'select') return;
+    const screenRect = storageRectToScreen(pdfPage, liveViewport, run.rect);
+    const canvas = overlayRef.current?.parentElement?.querySelector('canvas');
+    const colors = canvas ? sampleRunColors(canvas, screenRect) : { bg: '#ffffff', fg: '#000000' };
+    const pad = 1;
+    const box = { x: run.rect.x - pad, y: run.rect.y - pad, w: run.rect.w + pad * 2, h: run.rect.h + pad * 2 };
+    const id = uuid();
+    addAnnotation(doc.id, page.key, {
+      id,
+      type: 'text',
+      ...box,
+      text: run.str,
+      fontFamily: guessStandardFamily(run.fontFamilyHint),
+      fontId: null,
+      fontSize: run.fontSize,
+      color: colors.fg,
+      bold: false,
+      italic: false,
+      align: 'left',
+      coverRect: box,
+      coverColor: colors.bg
+    });
+    setEditingId(id);
   };
 
   const commitNewShape = useCallback(
@@ -49,13 +139,19 @@ export default function AnnotationLayer({ doc, page, pageIndex, pdfPage, scale, 
   );
 
   const onOverlayMouseDown = (e) => {
-    if (e.target !== overlayRef.current) return; // clicks on child objects handle themselves
-    const { x, y } = getOffset(e);
-
     if (tool === 'select') {
+      // Only the select tool cares about "did this click land on an empty
+      // part of the page" (to deselect) - existing objects handle their
+      // own clicks and stop this from firing for them.
+      if (e.target !== overlayRef.current) return;
       selectObject(doc.id, page.key, null);
       return;
     }
+    // Any other (drawing) tool should start drawing at this point even if
+    // the click happened to land over an existing object - existing
+    // objects only intercept clicks while the select tool is active (see
+    // BoxShape/StrokeShape's `interactive` guard).
+    const { x, y } = getOffset(e);
 
     if (tool === 'text') {
       const [sx, sy] = [x, y];
@@ -80,7 +176,15 @@ export default function AnnotationLayer({ doc, page, pageIndex, pdfPage, scale, 
       };
       addAnnotation(doc.id, page.key, ann);
       setTool(doc.id, 'select');
-      setEditingId(ann.id);
+      // Deferred: the click that creates this box is still mid-gesture
+      // (mousedown now, mouseup/click to follow at the same point, which
+      // is this box's top-left corner). Entering edit mode - and
+      // autofocusing a textarea - synchronously here races that pending
+      // mouseup: by the time it fires, the box is already interactive and
+      // sits right under the pointer, so a resize-handle hit steals focus
+      // straight back off the textarea. Waiting a tick lets the click
+      // gesture finish first.
+      setTimeout(() => setEditingId(ann.id), 0);
       return;
     }
 
@@ -187,39 +291,43 @@ export default function AnnotationLayer({ doc, page, pageIndex, pdfPage, scale, 
       style={{ cursor: tool === 'select' ? 'default' : 'crosshair' }}
       onMouseDown={onOverlayMouseDown}
     >
-      <svg width={pxW} height={pxH} style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
-        {annotations
-          .filter((a) => a.type === 'line' || a.type === 'arrow' || a.type === 'pen')
-          .map((a) => (
-            <StrokeShape
-              key={a.id}
-              ann={a}
-              pdfPage={pdfPage}
-              liveViewport={liveViewport}
-              selected={isSelected(a.id)}
-              onSelect={() => tool === 'select' && selectObject(doc.id, page.key, a.id)}
-              onChange={(patch, record) => updateAnnotation(doc.id, page.key, a.id, patch, { record })}
-              interactive={tool === 'select'}
+      {tool === 'select' &&
+        textRuns.map((run) => {
+          const r = storageRectToScreen(pdfPage, liveViewport, run.rect);
+          return (
+            <div
+              key={run.id}
+              className="text-hit-target"
+              title="Click to edit this text"
+              style={{ position: 'absolute', left: r.x, top: r.y, width: r.w, height: r.h }}
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={onTextRunClick(run)}
             />
-          ))}
-        {draft && (draft.tool === 'line' || draft.tool === 'arrow') && (
-          <line x1={draft.startX} y1={draft.startY} x2={draft.x} y2={draft.y} stroke={toolOptions.strokeColor} strokeWidth={toolOptions.strokeWidth} strokeDasharray="4 3" />
-        )}
-        {draft && draft.tool === 'pen' && (
-          <polyline
-            points={draft.points.map((p) => `${p.x},${p.y}`).join(' ')}
-            fill="none"
-            stroke={toolOptions.strokeColor}
-            strokeWidth={toolOptions.strokeWidth}
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        )}
-      </svg>
+          );
+        })}
 
-      {annotations
-        .filter((a) => BOX_TOOLS.has(a.type) || a.type === 'text' || a.type === 'image' || a.type === 'signature')
-        .map((a) => (
+      {/* Rendered in annotation-array order so DOM (paint) order always
+          matches the layer order the user sees/edits in the Layers panel,
+          regardless of whether a given object is SVG-based (line/arrow/
+          pen) or div-based (everything else). */}
+      {annotations.map((a) => {
+        const isStroke = a.type === 'line' || a.type === 'arrow' || a.type === 'pen';
+        if (isStroke) {
+          return (
+            <svg key={a.id} width={pxW} height={pxH} style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
+              <StrokeShape
+                ann={a}
+                pdfPage={pdfPage}
+                liveViewport={liveViewport}
+                selected={isSelected(a.id)}
+                onSelect={() => tool === 'select' && selectObject(doc.id, page.key, a.id)}
+                onChange={(patch, record) => updateAnnotation(doc.id, page.key, a.id, patch, { record })}
+                interactive={tool === 'select'}
+              />
+            </svg>
+          );
+        }
+        return (
           <BoxShape
             key={a.id}
             ann={a}
@@ -235,7 +343,26 @@ export default function AnnotationLayer({ doc, page, pageIndex, pdfPage, scale, 
             onChange={(patch, record) => updateAnnotation(doc.id, page.key, a.id, patch, { record })}
             interactive={tool === 'select'}
           />
-        ))}
+        );
+      })}
+
+      {(draft?.tool === 'line' || draft?.tool === 'arrow' || draft?.tool === 'pen') && (
+        <svg width={pxW} height={pxH} style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
+          {(draft.tool === 'line' || draft.tool === 'arrow') && (
+            <line x1={draft.startX} y1={draft.startY} x2={draft.x} y2={draft.y} stroke={toolOptions.strokeColor} strokeWidth={toolOptions.strokeWidth} strokeDasharray="4 3" />
+          )}
+          {draft.tool === 'pen' && (
+            <polyline
+              points={draft.points.map((p) => `${p.x},${p.y}`).join(' ')}
+              fill="none"
+              stroke={toolOptions.strokeColor}
+              strokeWidth={toolOptions.strokeWidth}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          )}
+        </svg>
+      )}
 
       {draft && BOX_TOOLS.has(draft.tool) && (
         <div
@@ -299,7 +426,7 @@ function BoxShape({ ann, pdfPage, liveViewport, selected, editing, onStartEdit, 
           color: ann.color,
           textAlign: ann.align,
           border: '1px solid var(--accent)',
-          background: 'rgba(255,255,255,0.9)'
+          background: ann.coverRect ? ann.coverColor : 'rgba(255,255,255,0.9)'
         }}
         defaultValue={ann.text}
         onBlur={(e) => {
@@ -321,7 +448,8 @@ function BoxShape({ ann, pdfPage, liveViewport, selected, editing, onStartEdit, 
           textAlign: ann.align,
           whiteSpace: 'pre-wrap',
           overflow: 'hidden',
-          outline: selected ? '1px solid var(--accent)' : 'none'
+          outline: selected ? '1px solid var(--accent)' : 'none',
+          background: ann.coverRect ? ann.coverColor : 'transparent'
         }}
         onDoubleClick={(e) => {
           e.stopPropagation();
@@ -376,8 +504,12 @@ function BoxShape({ ann, pdfPage, liveViewport, selected, editing, onStartEdit, 
       onDragStop={handleDragStop}
       onResizeStop={handleResizeStop}
       onMouseDown={(e) => {
+        // Only claim the click when a drawing tool isn't active - otherwise
+        // an existing object silently blocks the user from starting a new
+        // shape/text box on top of it.
+        if (!interactive) return;
         e.stopPropagation();
-        if (interactive) onSelect();
+        onSelect();
       }}
       style={{ zIndex: selected ? 5 : 1 }}
     >

@@ -1,6 +1,6 @@
 'use strict';
 
-const { app, BrowserWindow, dialog, ipcMain, Menu } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, Menu, session } = require('electron');
 const path = require('path');
 const fs = require('fs/promises');
 const { buildMenu } = require('./menu');
@@ -81,7 +81,19 @@ if (!gotLock) {
     }
   });
 
-  app.whenReady().then(createWindow);
+  app.whenReady().then(() => {
+    // Only 'local-fonts' is ever granted (used for the "System Fonts..."
+    // picker so users can embed a font already installed on their PC).
+    // Everything else (camera, mic, geolocation, notifications, ...) stays
+    // denied - this app has no use for them and it keeps the offline/
+    // privacy posture honest.
+    session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
+      callback(permission === 'local-fonts');
+    });
+    session.defaultSession.setPermissionCheckHandler((_wc, permission) => permission === 'local-fonts');
+
+    createWindow();
+  });
 
   app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') app.quit();

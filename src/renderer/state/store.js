@@ -51,6 +51,7 @@ export const useStore = create((set, get) => ({
   setSidebarTab: (tab) => set({ sidebarTab: tab, sidebarOpen: true }),
   toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
   openDialog: (type, props) => set({ dialog: { type, props: props || {} } }),
+  openFontPicker: (docId, onPick) => set({ dialog: { type: 'fontPicker', props: { docId, onPick } } }),
   closeDialog: () => set({ dialog: null }),
   showToast: (type, message) => set({ toast: { id: uuid(), type, message } }),
   clearToast: () => set({ toast: null }),
@@ -277,6 +278,26 @@ export const useStore = create((set, get) => ({
     const doc = get().documents[id];
     if (!doc || !doc.selection) return;
     get().deleteAnnotation(id, doc.selection.pageKey, doc.selection.objectId);
+  },
+
+  /** Paint order == array order (later entries render on top). */
+  reorderAnnotations(id, pageKey, newList) {
+    const doc = get().documents[id];
+    get().pushHistory(id);
+    get().updateDoc(id, { annotations: { ...doc.annotations, [pageKey]: newList }, dirty: true });
+  },
+
+  moveAnnotationLayer(id, pageKey, objectId, direction) {
+    const doc = get().documents[id];
+    const list = [...(doc.annotations[pageKey] || [])];
+    const idx = list.findIndex((a) => a.id === objectId);
+    if (idx < 0) return;
+    const [item] = list.splice(idx, 1);
+    if (direction === 'front') list.push(item);
+    else if (direction === 'back') list.unshift(item);
+    else if (direction === 'forward') list.splice(Math.min(idx + 1, list.length), 0, item);
+    else if (direction === 'backward') list.splice(Math.max(idx - 1, 0), 0, item);
+    get().reorderAnnotations(id, pageKey, list);
   },
 
   // ------------------------------------------------------------------

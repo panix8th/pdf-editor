@@ -8,6 +8,8 @@ export default function PropertiesPanel() {
   const deleteAnnotation = useStore((s) => s.deleteAnnotation);
   const setToolOptions = useStore((s) => s.setToolOptions);
   const registerCustomFont = useStore((s) => s.registerCustomFont);
+  const openFontPicker = useStore((s) => s.openFontPicker);
+  const moveAnnotationLayer = useStore((s) => s.moveAnnotationLayer);
   const fontInputRef = useRef(null);
 
   const selection = doc.selection;
@@ -61,9 +63,14 @@ export default function PropertiesPanel() {
                 </option>
               ))}
             </select>
-            <button className="btn" style={{ marginTop: 6 }} onClick={() => fontInputRef.current.click()}>
-              Load .ttf / .otf...
-            </button>
+            <div className="btn-row">
+              <button className="btn" onClick={() => openFontPicker(doc.id, (patch) => target.set(patch))}>
+                System Fonts...
+              </button>
+              <button className="btn" onClick={() => fontInputRef.current.click()}>
+                Load .ttf / .otf...
+              </button>
+            </div>
             <input
               ref={fontInputRef}
               type="file"
@@ -180,11 +187,22 @@ export default function PropertiesPanel() {
       )}
 
       {selected && (
-        <div className="btn-row">
-          <button className="btn danger" onClick={() => deleteAnnotation(doc.id, selection.pageKey, selection.objectId)}>
-            Delete Object
-          </button>
-        </div>
+        <>
+          <div className="pp-row">
+            <label>Layer order</label>
+            <div className="btn-row">
+              <button className="btn btn-icon" title="Bring to front" onClick={() => moveAnnotationLayer(doc.id, selection.pageKey, selection.objectId, 'front')}>⤒</button>
+              <button className="btn btn-icon" title="Move forward" onClick={() => moveAnnotationLayer(doc.id, selection.pageKey, selection.objectId, 'forward')}>↑</button>
+              <button className="btn btn-icon" title="Move backward" onClick={() => moveAnnotationLayer(doc.id, selection.pageKey, selection.objectId, 'backward')}>↓</button>
+              <button className="btn btn-icon" title="Send to back" onClick={() => moveAnnotationLayer(doc.id, selection.pageKey, selection.objectId, 'back')}>⤓</button>
+            </div>
+          </div>
+          <div className="btn-row">
+            <button className="btn danger" onClick={() => deleteAnnotation(doc.id, selection.pageKey, selection.objectId)}>
+              Delete Object
+            </button>
+          </div>
+        </>
       )}
     </div>
   );

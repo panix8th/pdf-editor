@@ -24,6 +24,7 @@ export default function Dialogs({ dialog }) {
       {dialog.type === 'digitalSignature' && <DigitalSignatureDialog />}
       {dialog.type === 'verifySignatures' && <VerifySignaturesDialog />}
       {dialog.type === 'insertPages' && <InsertPagesDialog />}
+      {dialog.type === 'fontPicker' && <FontPickerDialog {...dialog.props} />}
       {dialog.type === 'about' && <AboutDialog />}
     </div>
   );
@@ -660,6 +661,109 @@ function InsertPagesDialog() {
           {busy ? 'Inserting...' : 'Choose PDF...'}
         </button>
       </div>
+    </Modal>
+  );
+}
+
+// ---------------------------------------------------------------------------
+
+function FontPickerDialog({ docId, onPick }) {
+  const closeDialog = useStore((s) => s.closeDialog);
+  const registerCustomFont = useStore((s) => s.registerCustomFont);
+  const showToast = useStore((s) => s.showToast);
+  const [state, setState] = useState('idle'); // idle | loading | denied | unsupported | ready
+  const [fonts, setFonts] = useState([]);
+  const [query, setQuery] = useState('');
+  const [applying, setApplying] = useState(null);
+
+  const load = async () => {
+    if (typeof window.queryLocalFonts !== 'function') {
+      setState('unsupported');
+      return;
+    }
+    setState('loading');
+    try {
+      const list = await window.queryLocalFonts();
+      // One entry per family, remembering its "regular"-ish face where
+      // possible (queryLocalFonts returns one FontData per face/style).
+      const byFamily = new Map();
+      for (const f of list) {
+        if (!byFamily.has(f.family)) byFamily.set(f.family, f);
+        else if (/regular/i.test(f.style)) byFamily.set(f.family, f);
+      }
+      setFonts([...byFamily.values()].sort((a, b) => a.family.localeCompare(b.family)));
+      setState('ready');
+    } catch (err) {
+      setState(err.name === 'NotAllowedError' ? 'denied' : 'unsupported');
+    }
+  };
+
+  const pick = async (fontData) => {
+    setApplying(fontData.family);
+    try {
+      const blob = await fontData.blob();
+      const buf = await blob.arrayBuffer();
+      const fontId = `sysfont-${Date.now()}`;
+      registerCustomFont(docId, fontId, new Uint8Array(buf), fontData.family);
+      onPick({ fontId, fontFamily: fontData.family });
+      closeDialog();
+    } catch (err) {
+      showToast('error', `Could not load "${fontData.family}": ${err.message}`);
+    }
+    setApplying(null);
+  };
+
+  const filtered = fonts.filter((f) => f.family.toLowerCase().includes(query.toLowerCase()));
+
+  return (
+    <Modal title="Fonts Installed on This PC" wide>
+      {state === 'idle' && (
+        <>
+          <p>Reads the list of fonts installed on your computer so you can embed one directly - nothing leaves your machine.</p>
+          <div className="modal-actions">
+            <button className="btn" onClick={closeDialog}>Cancel</button>
+            <button className="btn primary" onClick={load}>Continue</button>
+          </div>
+        </>
+      )}
+      {state === 'loading' && <p>Reading installed fonts...</p>}
+      {state === 'unsupported' && (
+        <>
+          <p className="error-text">
+            Your system doesn't expose installed fonts to the app (the Local Font Access API isn't available here).
+          </p>
+          <p className="hint">You can still load a specific font file with "Load .ttf/.otf..." instead.</p>
+          <div className="modal-actions">
+            <button className="btn primary" onClick={closeDialog}>Close</button>
+          </div>
+        </>
+      )}
+      {state === 'denied' && (
+        <>
+          <p className="error-text">Font access was denied.</p>
+          <p className="hint">You can still load a specific font file with "Load .ttf/.otf..." instead.</p>
+          <div className="modal-actions">
+            <button className="btn primary" onClick={closeDialog}>Close</button>
+          </div>
+        </>
+      )}
+      {state === 'ready' && (
+        <>
+          <input className="field" placeholder="Filter fonts..." value={query} onChange={(e) => setQuery(e.target.value)} autoFocus />
+          <div className="font-list">
+            {filtered.map((f) => (
+              <div key={f.postscriptName} className="font-list-item" style={{ fontFamily: f.family }} onClick={() => pick(f)}>
+                {f.family}
+                {applying === f.family && <span className="hint"> loading...</span>}
+              </div>
+            ))}
+            {filtered.length === 0 && <div className="hint">No matching fonts.</div>}
+          </div>
+          <div className="modal-actions">
+            <button className="btn" onClick={closeDialog}>Cancel</button>
+          </div>
+        </>
+      )}
     </Modal>
   );
 }
