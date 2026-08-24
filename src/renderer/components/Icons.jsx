@@ -97,6 +97,14 @@ export const IconCertify = ({ size = 15 }) =>
       <path d="M7 8.5V6a3 3 0 016 0v2.5" />
     </>
   );
+export const IconFormField = ({ size = 15 }) =>
+  base(
+    size,
+    <>
+      <rect x="2.5" y="6" width="15" height="8" rx="1.5" strokeDasharray="2.5 2" />
+      <line x1="5.5" y1="10" x2="5.5" y2="10" strokeWidth="2.2" />
+    </>
+  );
 export const IconPages = ({ size = 17 }) =>
   base(
     size,

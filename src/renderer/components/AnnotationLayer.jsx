@@ -16,8 +16,9 @@ import { resolveAndCacheGoogleFont } from '../pdf/fetchAndCacheGoogleFont';
 import { findAndLoadSystemFont } from '../pdf/systemFontMatch';
 import { getCachedResolvedFontId, cacheResolvedFontId } from '../state/docResources';
 import { arrowGeometry, pointsAttr, DEFAULT_FILL_OPACITY } from '../pdf/shapeGeometry';
+import { FIELD_TYPE_LABELS, nextFieldName } from '../pdf/formFields';
 
-const BOX_TOOLS = new Set(['rect', 'ellipse', 'highlight', 'redact']);
+const BOX_TOOLS = new Set(['rect', 'ellipse', 'highlight', 'redact', 'formfield']);
 const LINE_TOOLS = new Set(['line', 'arrow']);
 
 function rectsIntersect(a, b) {
@@ -326,6 +327,14 @@ export default function AnnotationLayer({ doc, page, pageIndex, pdfPage, scale, 
         } else if (tool === 'redact') {
           commitNewShape('redact', { x: Math.min(x, ex), y: Math.min(y, ey), w: Math.abs(ex - x), h: Math.abs(ey - y) }, {});
           showToast('info', 'Redaction area marked. It is permanently flattened when you save.');
+        } else if (tool === 'formfield') {
+          commitNewShape('formfield', { x: Math.min(x, ex), y: Math.min(y, ey), w: Math.abs(ex - x), h: Math.abs(ey - y) }, {
+            fieldType: 'text',
+            name: nextFieldName(doc),
+            options: [],
+            required: false,
+            value: ''
+          });
         } else if (tool === 'line' || tool === 'arrow') {
           const p1 = screenPointToStorage(pdfPage, liveViewport, x, y);
           const p2 = screenPointToStorage(pdfPage, liveViewport, ex, ey);
@@ -612,6 +621,37 @@ function BoxShape({ ann, pdfPage, liveViewport, selected, editing, onStartEdit, 
         }}
       >
         REDACT
+      </div>
+    );
+  } else if (ann.type === 'formfield') {
+    content = (
+      <div
+        style={{
+          position: 'relative',
+          width: '100%',
+          height: '100%',
+          boxSizing: 'border-box',
+          borderRadius: 4,
+          border: '1.5px dashed var(--accent-line)',
+          background: 'var(--accent-soft)'
+        }}
+      >
+        <span
+          style={{
+            position: 'absolute',
+            top: -10,
+            left: 6,
+            padding: '2px 6px',
+            borderRadius: 5,
+            background: 'var(--accent)',
+            color: 'var(--accent-ink)',
+            fontSize: 9.5,
+            fontWeight: 600,
+            whiteSpace: 'nowrap'
+          }}
+        >
+          {FIELD_TYPE_LABELS[ann.fieldType] || 'Field'} · {ann.name}
+        </span>
       </div>
     );
   }

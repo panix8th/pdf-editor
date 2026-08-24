@@ -17,7 +17,8 @@ import {
   IconPen,
   IconRedact,
   IconSign,
-  IconCertify
+  IconCertify,
+  IconFormField
 } from './Icons.jsx';
 
 const TOOLS = [
@@ -30,6 +31,7 @@ const TOOLS = [
   { id: 'line', label: 'Line', icon: IconLine, labeled: false },
   { id: 'arrow', label: 'Arrow', icon: IconArrow, labeled: false },
   { id: 'pen', label: 'Pen', icon: IconPen, labeled: false },
+  { id: 'formfield', label: 'Field', icon: IconFormField, labeled: true },
   { id: 'redact', label: 'Redact', icon: IconRedact, labeled: true }
 ];
 

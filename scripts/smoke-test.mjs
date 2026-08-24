@@ -214,6 +214,25 @@ async function main() {
     'a JPEG mislabeled with a .png extension still inserts (sniffed by content, not trusted by name)'
   );
 
+  // --- Add Form Field tool: draw one, retype it, save as a real AcroForm field
+  await win.locator('.tcbtn[title="Field"]').click();
+  await win.mouse.move(box.x + 60, box.y + 200);
+  await win.mouse.down();
+  await win.mouse.move(box.x + 260, box.y + 230, { steps: 5 });
+  await win.mouse.up();
+  await win.waitForTimeout(250);
+  await win.locator('.tcbtn[title="Select"]').click();
+  await win.mouse.click(box.x + 160, box.y + 215);
+  await win.waitForTimeout(250);
+  assert((await win.locator('.pp-header-chip', { hasText: 'Form Field' }).count()) === 1, 'Field tool creates a selectable Form Field with its own properties');
+  const fieldNameInput = win.locator('.properties-panel input.field').first();
+  await fieldNameInput.fill('SmokeTestField');
+  await fieldNameInput.blur();
+  await win.waitForTimeout(150);
+  const fieldValueInput = win.locator('.properties-panel input.field').nth(1);
+  await fieldValueInput.fill('hello field');
+  await win.waitForTimeout(150);
+
   await win.screenshot({ path: path.join(root, 'scratch-after-edits.png') });
 
   // --- real Save As, via a monkey-patched dialog so no UI is needed ----
@@ -246,6 +265,11 @@ async function main() {
     saved.toString('latin1').includes('/Image'),
     'saved PDF embeds the inserted image as an XObject'
   );
+
+  const bakedField = reloaded.getForm().getFieldMaybe('SmokeTestField');
+  assert(!!bakedField, 'the Field tool baked a real "SmokeTestField" AcroForm field');
+  assert(bakedField.constructor.name === 'PDFTextField', `it is a real text field (got ${bakedField?.constructor?.name})`);
+  assert(bakedField.getText() === 'hello field', `its test value round-tripped (got ${JSON.stringify(bakedField?.getText())})`);
 
   await fs.unlink(savePath).catch(() => {});
   await fs.unlink(imgPath).catch(() => {});

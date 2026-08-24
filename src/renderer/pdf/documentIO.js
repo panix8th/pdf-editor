@@ -237,6 +237,23 @@ async function getFontFor(ctx, ann) {
   return embedded;
 }
 
+/** The renderer already tries to keep new field names unique (see
+ * pdf/formFields.js), but this is the actual gate that matters: pdf-lib
+ * throws if you try to create a field whose name already exists (which can
+ * happen here even when the renderer's check passed, e.g. a name that
+ * collides with a field from the *original* PDF that the renderer's
+ * doc.formFields snapshot didn't yet reflect). Appends a numeric suffix
+ * until the name is free rather than failing the whole save. */
+function resolveUniqueFieldName(form, name) {
+  let candidate = name;
+  let n = 1;
+  while (form.getFieldMaybe(candidate)) {
+    n += 1;
+    candidate = `${name} ${n}`;
+  }
+  return candidate;
+}
+
 async function drawAnnotation(ctx, page, ann, pageHeight) {
   const { outDoc, imageCache } = ctx;
   switch (ann.type) {
@@ -359,6 +376,31 @@ async function drawAnnotation(ctx, page, ann, pageHeight) {
       for (let i = 1; i < pts.length; i++) {
         page.drawLine({ start: pts[i - 1], end: pts[i], thickness, color });
       }
+      break;
+    }
+    case 'formfield': {
+      const form = outDoc.getForm();
+      const name = resolveUniqueFieldName(form, ann.name || 'Field');
+      const box = storageRectToPdfLib({ x: ann.x, y: ann.y, w: ann.w, h: ann.h }, pageHeight);
+      const widgetOpts = { x: box.x, y: box.y, width: box.w, height: box.h };
+      let field;
+
+      if (ann.fieldType === 'checkbox') {
+        field = form.createCheckBox(name);
+        field.addToPage(page, widgetOpts);
+        if (ann.value) field.check();
+      } else if (ann.fieldType === 'dropdown') {
+        field = form.createDropdown(name);
+        const options = (ann.options || []).filter(Boolean);
+        if (options.length) field.setOptions(options);
+        field.addToPage(page, widgetOpts);
+        if (ann.value && options.includes(ann.value)) field.select(ann.value);
+      } else {
+        field = form.createTextField(name);
+        field.addToPage(page, widgetOpts);
+        if (ann.value) field.setText(String(ann.value));
+      }
+      if (ann.required) field.enableRequired();
       break;
     }
     default:

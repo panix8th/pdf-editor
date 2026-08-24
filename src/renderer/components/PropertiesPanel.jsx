@@ -1,6 +1,7 @@
 import React, { useRef } from 'react';
 import { useStore } from '../state/store';
 import { STANDARD_FONT_FAMILIES } from '../pdf/fonts';
+import { isFieldNameTaken } from '../pdf/formFields';
 
 const PALETTE = ['#b49bf0', '#d79bef', '#9aa8f5', '#f5d99a', '#9af5c6'];
 
@@ -36,6 +37,7 @@ export default function PropertiesPanel() {
   const openFontPicker = useStore((s) => s.openFontPicker);
   const openGoogleFontPicker = useStore((s) => s.openGoogleFontPicker);
   const moveAnnotationLayer = useStore((s) => s.moveAnnotationLayer);
+  const showToast = useStore((s) => s.showToast);
   const fontInputRef = useRef(null);
 
   const selection = doc.selection;
@@ -69,7 +71,8 @@ export default function PropertiesPanel() {
   const showStrokeProps = SHAPE_STROKE_TYPES.includes(selected ? selected.type : doc.tool);
   const showFillProps = ['rect', 'ellipse'].includes(selected ? selected.type : doc.tool);
   const showHighlightProps = selected ? selected.type === 'highlight' : doc.tool === 'highlight';
-  const toolLabel = selected ? `${selected.type[0].toUpperCase()}${selected.type.slice(1)}` : `${doc.tool[0].toUpperCase()}${doc.tool.slice(1)}`;
+  const capitalize = (s) => (s === 'formfield' ? 'Form Field' : `${s[0].toUpperCase()}${s.slice(1)}`);
+  const toolLabel = capitalize(selected ? selected.type : doc.tool);
 
   return (
     <div className="properties-panel">
@@ -224,6 +227,96 @@ export default function PropertiesPanel() {
               />
             </>
           )}
+        </div>
+      )}
+
+      {!selected && doc.tool === 'formfield' && (
+        <div className="pp-section">
+          <span className="hint" style={{ marginTop: 0 }}>
+            Draw a box on the page to add a fillable field. Its type, name, and options are set below once placed.
+          </span>
+        </div>
+      )}
+
+      {selected && selected.type === 'formfield' && (
+        <div className="pp-section">
+          <span className="pp-section-label">Field Type</span>
+          <select
+            className="field"
+            value={selected.fieldType}
+            onChange={(e) => {
+              const fieldType = e.target.value;
+              const patch = { fieldType, value: fieldType === 'checkbox' ? false : '' };
+              if (fieldType === 'dropdown' && !(selected.options || []).length) patch.options = ['Option 1', 'Option 2'];
+              target.set(patch);
+            }}
+          >
+            <option value="text">Text Field</option>
+            <option value="checkbox">Checkbox</option>
+            <option value="dropdown">Dropdown</option>
+          </select>
+
+          <span className="pp-section-label" style={{ marginTop: 4 }}>Field Name</span>
+          <input
+            className="field"
+            defaultValue={selected.name}
+            onBlur={(e) => {
+              const name = e.target.value.trim();
+              if (!name) {
+                e.target.value = selected.name;
+                return;
+              }
+              if (name !== selected.name && isFieldNameTaken(doc, name, selected.id)) {
+                showToast('error', `"${name}" is already used by another field in this document.`);
+                e.target.value = selected.name;
+                return;
+              }
+              target.set({ name });
+            }}
+          />
+
+          {selected.fieldType === 'dropdown' && (
+            <>
+              <span className="pp-section-label" style={{ marginTop: 4 }}>Options (one per line)</span>
+              <textarea
+                className="field"
+                defaultValue={(selected.options || []).join('\n')}
+                onBlur={(e) => {
+                  const options = e.target.value
+                    .split('\n')
+                    .map((s) => s.trim())
+                    .filter(Boolean);
+                  target.set({ options });
+                }}
+              />
+            </>
+          )}
+
+          <div className="pp-row-inline" style={{ marginTop: 4 }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: 'var(--dim)', cursor: 'pointer' }}>
+              <input type="checkbox" checked={!!selected.required} onChange={(e) => target.set({ required: e.target.checked })} />
+              Required
+            </label>
+          </div>
+
+          <span className="pp-section-label" style={{ marginTop: 4 }}>Test value</span>
+          {selected.fieldType === 'text' && (
+            <input className="field" value={selected.value || ''} onChange={(e) => target.set({ value: e.target.value })} />
+          )}
+          {selected.fieldType === 'checkbox' && (
+            <input type="checkbox" checked={!!selected.value} onChange={(e) => target.set({ value: e.target.checked })} />
+          )}
+          {selected.fieldType === 'dropdown' && (
+            <select className="field" value={selected.value || ''} onChange={(e) => target.set({ value: e.target.value })}>
+              <option value="" />
+              {(selected.options || []).map((o) => (
+                <option key={o} value={o}>
+                  {o}
+                </option>
+              ))}
+            </select>
+          )}
+          <span className="hint" style={{ marginTop: 4 }}>Baked as a real fillable PDF field when you save.</span>
         </div>
       )}
 

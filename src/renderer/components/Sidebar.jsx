@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useStore, getResource } from '../state/store';
 import { searchDocument } from '../pdf/textSearch';
 import { IconPages, IconOutline, IconSearch, IconForms, IconLayers } from './Icons.jsx';
+import { FIELD_TYPE_LABELS } from '../pdf/formFields';
 
 const TABS = [
   { id: 'thumbnails', label: 'Pages', icon: IconPages },
@@ -21,7 +22,8 @@ const TYPE_LABELS = {
   arrow: 'Arrow',
   pen: 'Pen',
   highlight: 'Highlight',
-  redact: 'Redaction'
+  redact: 'Redaction',
+  formfield: 'Form Field'
 };
 
 const MIN_PANEL_W = 200;
@@ -32,7 +34,14 @@ function panelCount(doc, tab) {
   if (tab === 'thumbnails') return `${doc.pageCount} page${doc.pageCount === 1 ? '' : 's'}`;
   if (tab === 'outline') return `${doc.outline?.length || 0}`;
   if (tab === 'search') return doc.search.matches.length ? `${doc.search.matches.length}` : null;
-  if (tab === 'forms') return doc.formFields?.length ? `${doc.formFields.length}` : null;
+  if (tab === 'forms') {
+    let newFieldCount = 0;
+    for (const pageKey of Object.keys(doc.annotations)) {
+      newFieldCount += doc.annotations[pageKey].filter((a) => a.type === 'formfield').length;
+    }
+    const total = (doc.formFields?.length || 0) + newFieldCount;
+    return total ? `${total}` : null;
+  }
   if (tab === 'layers') {
     const page = doc.pages[doc.currentPage - 1];
     const count = page ? (doc.annotations[page.key] || []).length : 0;
@@ -361,13 +370,26 @@ function SearchPanel({ doc }) {
 
 function FormsPanel({ doc }) {
   const updateDoc = useStore((s) => s.updateDoc);
+  const updateAnnotation = useStore((s) => s.updateAnnotation);
   const markDirty = useStore((s) => s.markDirty);
+
+  // Fields already in the opened PDF (doc.formFields) and fields added
+  // this session via the Field tool (formfield annotations, not yet baked
+  // into a real AcroForm field until Save) are both listed here so new
+  // ones can be test-filled immediately instead of only after a save +
+  // reopen round-trip.
+  const newFields = [];
+  for (const pageKey of Object.keys(doc.annotations)) {
+    for (const ann of doc.annotations[pageKey]) {
+      if (ann.type === 'formfield') newFields.push({ pageKey, ann });
+    }
+  }
 
   if (doc.editingUnsupported) {
     return <div className="forms-empty">Form filling isn't available for this file's encryption type.</div>;
   }
-  if (!doc.formFields || doc.formFields.length === 0) {
-    return <div className="forms-empty">No fillable form fields detected in this document.</div>;
+  if ((!doc.formFields || doc.formFields.length === 0) && newFields.length === 0) {
+    return <div className="forms-empty">No fillable form fields yet. Detected fields from the PDF appear here, or add your own with the Field tool.</div>;
   }
 
   const setValue = (name, value) => {
@@ -404,6 +426,41 @@ function FormsPanel({ doc }) {
           </div>
         );
       })}
+      {newFields.map(({ pageKey, ann }) => (
+        <div key={ann.id} className="form-field">
+          <label>
+            {ann.name} <span style={{ opacity: 0.6 }}>({FIELD_TYPE_LABELS[ann.fieldType] || ann.fieldType}, new)</span>
+          </label>
+          {ann.fieldType === 'text' && (
+            <input
+              className="field"
+              value={ann.value || ''}
+              onChange={(e) => updateAnnotation(doc.id, pageKey, ann.id, { value: e.target.value }, { record: false })}
+            />
+          )}
+          {ann.fieldType === 'checkbox' && (
+            <input
+              type="checkbox"
+              checked={!!ann.value}
+              onChange={(e) => updateAnnotation(doc.id, pageKey, ann.id, { value: e.target.checked }, { record: false })}
+            />
+          )}
+          {ann.fieldType === 'dropdown' && (
+            <select
+              className="field"
+              value={ann.value || ''}
+              onChange={(e) => updateAnnotation(doc.id, pageKey, ann.id, { value: e.target.value }, { record: false })}
+            >
+              <option value="" />
+              {(ann.options || []).map((opt) => (
+                <option key={opt} value={opt}>
+                  {opt}
+                </option>
+              ))}
+            </select>
+          )}
+        </div>
+      ))}
       <div className="hint">Field values are baked in the next time you save.</div>
     </div>
   );

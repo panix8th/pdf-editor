@@ -40,7 +40,11 @@ Fonts.
   from another PDF. Undo/redo and standard shortcuts (Ctrl+Z/Y, Ctrl+S,
   Ctrl+O, Ctrl+F, Delete, ...).
 - **Forms** - detects existing AcroForm fields (text, checkbox, radio,
-  dropdown) and fills them from a side panel.
+  dropdown) and fills them from a side panel. The Field tool also adds new
+  fillable fields to a PDF that doesn't have them: draw a box, pick a type
+  (text/checkbox/dropdown) and a name in the properties panel, and it's
+  baked in as a real AcroForm field on save - test-fillable immediately in
+  the Forms panel in the same session, before you've even saved.
 - **Signing** - visual signatures (draw / type / upload an image, then
   place & resize on any page) and real cryptographic digital signatures
   from a `.pfx`/`.p12` certificate, with a signature-status check shown
@@ -108,7 +112,8 @@ pdf-editor/
 │        ├─ viewportMath.js  pdf.js-compatible viewport math for pages with no pdf.js proxy (blank pages)
 │        ├─ fonts.js       Standard font table + custom font helpers
 │        ├─ shapeGeometry.js  Shape math shared by the live preview and the saved output
-│        ├─ placeImage.js  Native "insert an image" picker + placement
+│        ├─ placeImage.js  Native "insert an image" picker + placement (content-sniffed, not by extension)
+│        ├─ formFields.js  Field-name uniqueness helpers for the Field tool
 │        └─ textSearch.js  Full-text search over a pdf.js document
 ├─ scripts/
 │  ├─ verify-encryption.mjs  Standalone round-trip test for security.js (see Testing)
@@ -200,6 +205,13 @@ validate the highest-risk, hand-rolled pieces:
 
 ## Known limitations
 
+- **Adding new form fields** (the Field tool) supports text fields,
+  checkboxes, and dropdowns - not radio groups, which need multiple
+  on-page widgets (one per option) rather than the single box every other
+  field type here draws with. Field names must be unique in the document;
+  the properties panel checks this as you rename one, and the save path
+  also resolves any leftover collision (e.g. against a field already in
+  the original PDF) by appending a number rather than failing the save.
 - **Editing existing text** covers the original run (background color
   sampled from the rendered page) and draws the edit on top, rather than
   rewriting the PDF's content stream - there's no portable, general way to

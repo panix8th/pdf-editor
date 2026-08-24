@@ -186,6 +186,7 @@ export default function App() {
         case 'tool:line':
         case 'tool:arrow':
         case 'tool:pen':
+        case 'tool:formfield':
         case 'tool:redact':
           if (doc) setTool(doc.id, action.split(':')[1]);
           break;

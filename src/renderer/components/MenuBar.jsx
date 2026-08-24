@@ -55,6 +55,7 @@ function buildMenus(hasDoc, hasSelection, canUndo, canRedo) {
         { label: 'Line', action: 'tool:line', disabled: !hasDoc },
         { label: 'Arrow', action: 'tool:arrow', disabled: !hasDoc },
         { label: 'Freehand Pen', action: 'tool:pen', disabled: !hasDoc },
+        { label: 'Add Form Field', action: 'tool:formfield', disabled: !hasDoc },
         { label: 'Redact', action: 'tool:redact', disabled: !hasDoc },
         { sep: true },
         { label: 'Fill Form Fields', action: 'tool:form', disabled: !hasDoc }
