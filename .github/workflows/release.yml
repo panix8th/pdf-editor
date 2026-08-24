@@ -1,0 +1,35 @@
+name: Build and Release Windows EXE
+
+# Builds the app on a real Windows runner (no Wine cross-compilation) and
+# publishes the NSIS installer + portable exe as assets on a GitHub Release
+# whenever a version tag (e.g. v1.0.0) is pushed.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - run: npm install
+
+      - run: npm run dist
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release/*.exe
+          generate_release_notes: true
