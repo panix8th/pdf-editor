@@ -132,10 +132,13 @@ export default function App() {
         case 'edit:find':
           if (doc) s.setSidebarTab('search');
           break;
-        case 'tool:text':
         case 'tool:image':
+          if (doc) s.insertImage(doc.id);
+          break;
+        case 'tool:text':
         case 'tool:highlight':
         case 'tool:rect':
+        case 'tool:ellipse':
         case 'tool:line':
         case 'tool:arrow':
         case 'tool:pen':

@@ -7,6 +7,7 @@ const TOOLS = [
   { id: 'image', label: 'Image' },
   { id: 'highlight', label: 'Highlight' },
   { id: 'rect', label: 'Rect' },
+  { id: 'ellipse', label: 'Ellipse' },
   { id: 'line', label: 'Line' },
   { id: 'arrow', label: 'Arrow' },
   { id: 'pen', label: 'Pen' },
@@ -26,6 +27,7 @@ export default function Toolbar({ onOpen, onSave, onSaveAs }) {
   const theme = useStore((s) => s.theme);
   const openDialog = useStore((s) => s.openDialog);
   const showToast = useStore((s) => s.showToast);
+  const insertImage = useStore((s) => s.insertImage);
 
   const requireDoc = (fn) => () => {
     if (!doc) {
@@ -64,8 +66,8 @@ export default function Toolbar({ onOpen, onSave, onSaveAs }) {
             key={t.id}
             className={`tbtn ${doc?.tool === t.id ? 'active' : ''}`}
             disabled={!doc}
-            onClick={() => setTool(doc.id, t.id)}
-            title={t.label}
+            onClick={() => (t.id === 'image' ? insertImage(doc.id) : setTool(doc.id, t.id))}
+            title={t.id === 'image' ? 'Insert an image (PNG/JPG)' : t.label}
           >
             {t.label}
           </button>

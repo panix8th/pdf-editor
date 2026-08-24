@@ -30,7 +30,8 @@ Fonts.
   (no drag) still edits a single run as before. Plus new text boxes
   (font family/size/color/bold/italic/alignment, standard fonts, any font
   installed on your PC via the Local Font Access picker, any font by name
-  from Google Fonts, or a loaded `.ttf`/`.otf`), images, rectangles, lines, arrows,
+  from Google Fonts, or a loaded `.ttf`/`.otf`), images (one click inserts a PNG/JPG on the current
+  page, ready to drag/resize), rectangles, ellipses, lines, arrows,
   freehand pen, highlights, and a redaction tool that rasterizes the
   affected page so the underlying content is genuinely removed, not just
   covered. A Layers panel shows every object on the page top-to-bottom
@@ -90,6 +91,8 @@ pdf-editor/
 │        ├─ coords.js      Screen <-> stored-annotation coordinate conversion (rotation/zoom-safe)
 │        ├─ viewportMath.js  pdf.js-compatible viewport math for pages with no pdf.js proxy (blank pages)
 │        ├─ fonts.js       Standard font table + custom font helpers
+│        ├─ shapeGeometry.js  Shape math shared by the live preview and the saved output
+│        ├─ placeImage.js  Native "insert an image" picker + placement
 │        └─ textSearch.js  Full-text search over a pdf.js document
 ├─ scripts/
 │  ├─ verify-encryption.mjs  Standalone round-trip test for security.js (see Testing)
@@ -198,6 +201,12 @@ validate the highest-risk, hand-rolled pieces:
   hash matches the signature and reports the signing certificate's own
   claims (issuer, validity dates); it does not walk the certificate chain
   against your OS's trusted root store.
+- **Shapes** (rect/ellipse/line/arrow) derive their geometry from one
+  shared module (`src/renderer/pdf/shapeGeometry.js`) that both the live
+  preview and the save path call, so what you draw is what gets written.
+  Strokes are stored in PDF points and inset by half the stroke width when
+  baked, because PDF strokes straddle their path while the preview's CSS
+  border sits inside the box.
 - Very large documents (500+ pages) render lazily but aren't fully
   virtualized (rendered pages stay in the DOM once shown), so extremely
   long documents may use more memory than a dedicated virtualized viewer.

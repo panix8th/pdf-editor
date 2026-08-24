@@ -34,8 +34,8 @@ export default function ToolOptionsBar() {
   };
 
   const showText = doc.tool === 'text';
-  const showStroke = ['rect', 'line', 'arrow', 'pen'].includes(doc.tool);
-  const showFill = doc.tool === 'rect';
+  const showStroke = ['rect', 'ellipse', 'line', 'arrow', 'pen'].includes(doc.tool);
+  const showFill = doc.tool === 'rect' || doc.tool === 'ellipse';
   const showHighlight = doc.tool === 'highlight';
 
   return (

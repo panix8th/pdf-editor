@@ -3,6 +3,7 @@ import fontkit from '@pdf-lib/fontkit';
 import pdfjsLib from './pdfjsSetup';
 import { resolveStandardFont, isCustomFont } from './fonts';
 import { storageRectToPdfLib } from './coords';
+import { arrowGeometry, insetForStroke, DEFAULT_FILL_OPACITY } from './shapeGeometry';
 
 // ---------------------------------------------------------------------------
 // Opening
@@ -239,16 +240,35 @@ async function drawAnnotation(ctx, page, ann, pageHeight) {
       break;
     }
     case 'rect': {
-      const box = storageRectToPdfLib({ x: ann.x, y: ann.y, w: ann.w, h: ann.h }, pageHeight);
+      const stroke = ann.strokeWidth || 2;
+      // PDF strokes straddle the path; the preview's CSS border sits
+      // inside the box. Inset so both render the same outer edge.
+      const box = storageRectToPdfLib(insetForStroke({ x: ann.x, y: ann.y, w: ann.w, h: ann.h }, stroke), pageHeight);
       page.drawRectangle({
         x: box.x,
         y: box.y,
         width: box.w,
         height: box.h,
         borderColor: hexToRgb(ann.strokeColor),
-        borderWidth: ann.strokeWidth || 2,
+        borderWidth: stroke,
         color: ann.fillColor ? hexToRgb(ann.fillColor) : undefined,
-        opacity: ann.fillColor ? (ann.fillOpacity ?? 1) : 0,
+        opacity: ann.fillColor ? (ann.fillOpacity ?? DEFAULT_FILL_OPACITY) : 0,
+        borderOpacity: 1
+      });
+      break;
+    }
+    case 'ellipse': {
+      const stroke = ann.strokeWidth || 2;
+      const box = storageRectToPdfLib(insetForStroke({ x: ann.x, y: ann.y, w: ann.w, h: ann.h }, stroke), pageHeight);
+      page.drawEllipse({
+        x: box.x + box.w / 2,
+        y: box.y + box.h / 2,
+        xScale: Math.max(0, box.w / 2),
+        yScale: Math.max(0, box.h / 2),
+        borderColor: hexToRgb(ann.strokeColor),
+        borderWidth: stroke,
+        color: ann.fillColor ? hexToRgb(ann.fillColor) : undefined,
+        opacity: ann.fillColor ? (ann.fillOpacity ?? DEFAULT_FILL_OPACITY) : 0,
         borderOpacity: 1
       });
       break;
@@ -267,20 +287,34 @@ async function drawAnnotation(ctx, page, ann, pageHeight) {
     }
     case 'line':
     case 'arrow': {
-      const p1 = { x: ann.x1, y: pageHeight - ann.y1 };
-      const p2 = { x: ann.x2, y: pageHeight - ann.y2 };
       const color = hexToRgb(ann.strokeColor);
       const thickness = ann.strokeWidth || 2;
-      page.drawLine({ start: p1, end: p2, thickness, color });
-      if (ann.type === 'arrow') {
-        const angle = Math.atan2(p2.y - p1.y, p2.x - p1.x);
-        const headLen = Math.max(10, thickness * 4);
-        const spread = Math.PI / 7;
-        for (const sign of [1, -1]) {
-          const hx = p2.x - headLen * Math.cos(angle - sign * spread);
-          const hy = p2.y - headLen * Math.sin(angle - sign * spread);
-          page.drawLine({ start: p2, end: { x: hx, y: hy }, thickness, color });
-        }
+      if (ann.type === 'line') {
+        page.drawLine({
+          start: { x: ann.x1, y: pageHeight - ann.y1 },
+          end: { x: ann.x2, y: pageHeight - ann.y2 },
+          thickness,
+          color
+        });
+        break;
+      }
+      // Arrow: same geometry the on-screen preview uses, so what's saved
+      // matches what was drawn - a shaft stopping at the head's base plus
+      // a solid triangular head (not two thin open strokes off the tip).
+      const geo = arrowGeometry(ann.x1, ann.y1, ann.x2, ann.y2, thickness);
+      page.drawLine({
+        start: { x: geo.shaft.x1, y: pageHeight - geo.shaft.y1 },
+        end: { x: geo.shaft.x2, y: pageHeight - geo.shaft.y2 },
+        thickness,
+        color
+      });
+      if (geo.head.length === 3) {
+        // drawSvgPath reads its path in SVG convention (y down from the
+        // anchor), so anchoring at the page's top-left lets us hand it
+        // storage-space coordinates directly.
+        const [tip, b1, b2] = geo.head;
+        const d = `M ${tip[0]} ${tip[1]} L ${b1[0]} ${b1[1]} L ${b2[0]} ${b2[1]} Z`;
+        page.drawSvgPath(d, { x: 0, y: pageHeight, color, borderWidth: 0 });
       }
       break;
     }

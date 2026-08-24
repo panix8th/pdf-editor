@@ -15,8 +15,9 @@ import { resolveGoogleFontCandidates } from '../pdf/googleFontMap';
 import { resolveAndCacheGoogleFont } from '../pdf/fetchAndCacheGoogleFont';
 import { findAndLoadSystemFont } from '../pdf/systemFontMatch';
 import { getCachedResolvedFontId, cacheResolvedFontId } from '../state/docResources';
+import { arrowGeometry, pointsAttr, DEFAULT_FILL_OPACITY } from '../pdf/shapeGeometry';
 
-const BOX_TOOLS = new Set(['rect', 'highlight', 'redact']);
+const BOX_TOOLS = new Set(['rect', 'ellipse', 'highlight', 'redact']);
 const LINE_TOOLS = new Set(['line', 'arrow']);
 
 function rectsIntersect(a, b) {
@@ -300,40 +301,6 @@ export default function AnnotationLayer({ doc, page, pageIndex, pdfPage, scale, 
       return;
     }
 
-    if (tool === 'image') {
-      const input = document.createElement('input');
-      input.type = 'file';
-      input.accept = 'image/png,image/jpeg';
-      input.onchange = () => {
-        const file = input.files[0];
-        if (!file) return;
-        const reader = new FileReader();
-        reader.onload = () => {
-          const img = new Image();
-          img.onload = () => {
-            const storagePt = screenPointToStorage(pdfPage, liveViewport, x, y);
-            const w = 180;
-            const h = w * (img.height / img.width);
-            addAnnotation(doc.id, page.key, {
-              id: uuid(),
-              type: 'image',
-              x: storagePt[0],
-              y: storagePt[1],
-              w,
-              h,
-              src: reader.result,
-              format: file.type.includes('png') ? 'png' : 'jpg'
-            });
-            setTool(doc.id, 'select');
-          };
-          img.src = reader.result;
-        };
-        reader.readAsDataURL(file);
-      };
-      input.click();
-      return;
-    }
-
     if (BOX_TOOLS.has(tool) || LINE_TOOLS.has(tool) || tool === 'pen') {
       setDraft({ tool, startX: x, startY: y, x, y, points: [{ x, y }] });
       const onMove = (ev) => {
@@ -344,8 +311,8 @@ export default function AnnotationLayer({ doc, page, pageIndex, pdfPage, scale, 
         window.removeEventListener('mousemove', onMove);
         window.removeEventListener('mouseup', onUp);
         const { x: ex, y: ey } = getOffset(ev);
-        if (tool === 'rect') {
-          commitNewShape('rect', { x: Math.min(x, ex), y: Math.min(y, ey), w: Math.abs(ex - x), h: Math.abs(ey - y) }, {
+        if (tool === 'rect' || tool === 'ellipse') {
+          commitNewShape(tool, { x: Math.min(x, ex), y: Math.min(y, ey), w: Math.abs(ex - x), h: Math.abs(ey - y) }, {
             strokeColor: toolOptions.strokeColor,
             strokeWidth: toolOptions.strokeWidth,
             fillColor: toolOptions.fillColor || undefined,
@@ -460,9 +427,21 @@ export default function AnnotationLayer({ doc, page, pageIndex, pdfPage, scale, 
 
       {(draft?.tool === 'line' || draft?.tool === 'arrow' || draft?.tool === 'pen') && (
         <svg width={pxW} height={pxH} style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
-          {(draft.tool === 'line' || draft.tool === 'arrow') && (
+          {draft.tool === 'line' && (
             <line x1={draft.startX} y1={draft.startY} x2={draft.x} y2={draft.y} stroke={toolOptions.strokeColor} strokeWidth={toolOptions.strokeWidth * liveViewport.scale} strokeDasharray="4 3" />
           )}
+          {/* The in-progress arrow previews its real shape (shaft + solid
+              head), so releasing the mouse doesn't change what you saw. */}
+          {draft.tool === 'arrow' &&
+            (() => {
+              const g = arrowGeometry(draft.startX, draft.startY, draft.x, draft.y, toolOptions.strokeWidth * liveViewport.scale);
+              return (
+                <>
+                  <line x1={g.shaft.x1} y1={g.shaft.y1} x2={g.shaft.x2} y2={g.shaft.y2} stroke={toolOptions.strokeColor} strokeWidth={toolOptions.strokeWidth * liveViewport.scale} />
+                  {g.head.length === 3 && <polygon points={pointsAttr(g.head)} fill={toolOptions.strokeColor} />}
+                </>
+              );
+            })()}
           {draft.tool === 'pen' && (
             <polyline
               points={draft.points.map((p) => `${p.x},${p.y}`).join(' ')}
@@ -484,6 +463,8 @@ export default function AnnotationLayer({ doc, page, pageIndex, pdfPage, scale, 
             top: Math.min(draft.startY, draft.y),
             width: Math.abs(draft.x - draft.startX),
             height: Math.abs(draft.y - draft.startY),
+            boxSizing: 'border-box',
+            borderRadius: draft.tool === 'ellipse' ? '50%' : 0,
             background: draft.tool === 'redact' ? 'rgba(120,0,0,0.45)' : draft.tool === 'highlight' ? 'rgba(255,224,102,0.45)' : 'transparent',
             border: `2px dashed ${toolOptions.strokeColor}`,
             pointerEvents: 'none'
@@ -598,14 +579,18 @@ function BoxShape({ ann, pdfPage, liveViewport, selected, editing, onStartEdit, 
     );
   } else if (ann.type === 'image' || ann.type === 'signature') {
     content = <img src={ann.src} alt="" draggable={false} style={{ width: '100%', height: '100%', outline: selected ? '1px solid var(--accent)' : 'none' }} />;
-  } else if (ann.type === 'rect') {
+  } else if (ann.type === 'rect' || ann.type === 'ellipse') {
     content = (
       <div
         style={{
           width: '100%',
           height: '100%',
+          // border-box so the stroke sits inside the box, matching the
+          // inset the save path applies (see shapeGeometry.insetForStroke).
+          boxSizing: 'border-box',
+          borderRadius: ann.type === 'ellipse' ? '50%' : 0,
           border: `${Math.max(1, ann.strokeWidth * zoomScale)}px solid ${ann.strokeColor}`,
-          background: ann.fillColor ? hexToRgba(ann.fillColor, ann.fillOpacity ?? 0.3) : 'transparent'
+          background: ann.fillColor ? hexToRgba(ann.fillColor, ann.fillOpacity ?? DEFAULT_FILL_OPACITY) : 'transparent'
         }}
       />
     );
@@ -695,6 +680,14 @@ function StrokeShape({ ann, pdfPage, liveViewport, selected, onSelect, onChange,
   // line / arrow
   const [x1, y1] = storagePointToScreen(pdfPage, liveViewport, ann.x1, ann.y1);
   const [x2, y2] = storagePointToScreen(pdfPage, liveViewport, ann.x2, ann.y2);
+  // Arrowheads are drawn as an explicit polygon rather than an SVG
+  // <marker>: markers scale with `markerUnits="strokeWidth"` (so the head
+  // ballooned on thick strokes) and every arrow on the page reused the
+  // same marker id, so they all picked up the first arrow's color. This
+  // also shares arrowGeometry() with the save path, so what you see is
+  // what gets written.
+  const geo = ann.type === 'arrow' ? arrowGeometry(x1, y1, x2, y2, ann.strokeWidth * zoomScale) : null;
+  const shaftEnd = geo ? [geo.shaft.x2, geo.shaft.y2] : [x2, y2];
 
   const makeEndpointDrag = (whichX, whichY) => (e) => {
     if (!interactive) return;
@@ -739,13 +732,9 @@ function StrokeShape({ ann, pdfPage, liveViewport, selected, onSelect, onChange,
   return (
     <g>
       <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="transparent" strokeWidth={Math.max(14, ann.strokeWidth * zoomScale + 10)} style={{ pointerEvents: interactive ? 'stroke' : 'none', cursor: 'move' }} onMouseDown={onLineDrag} />
-      <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={ann.strokeColor} strokeWidth={(ann.strokeWidth + (selected ? 1.5 : 0)) * zoomScale} markerEnd={ann.type === 'arrow' ? 'url(#arrowhead)' : undefined} style={{ pointerEvents: 'none' }} />
-      {ann.type === 'arrow' && (
-        <defs>
-          <marker id="arrowhead" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
-            <path d="M0,0 L8,4 L0,8 Z" fill={ann.strokeColor} />
-          </marker>
-        </defs>
+      <line x1={x1} y1={y1} x2={shaftEnd[0]} y2={shaftEnd[1]} stroke={ann.strokeColor} strokeWidth={(ann.strokeWidth + (selected ? 1.5 : 0)) * zoomScale} style={{ pointerEvents: 'none' }} />
+      {geo && geo.head.length === 3 && (
+        <polygon points={pointsAttr(geo.head)} fill={ann.strokeColor} style={{ pointerEvents: 'none' }} />
       )}
       {selected && interactive && (
         <>

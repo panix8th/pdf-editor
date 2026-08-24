@@ -1,18 +1,48 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#5b9bff"/>
-      <stop offset="1" stop-color="#2f5fd6"/>
+    <linearGradient id="bg" x1="0" y1="0" x2="0.65" y2="1">
+      <stop offset="0" stop-color="#3d6bff"/>
+      <stop offset="0.55" stop-color="#5b3df0"/>
+      <stop offset="1" stop-color="#7c2fd6"/>
     </linearGradient>
+    <linearGradient id="sheet" x1="0.2" y1="0" x2="0.8" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#eef2ff"/>
+    </linearGradient>
+    <linearGradient id="fold" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#b9c6ff"/>
+      <stop offset="1" stop-color="#8ea3f5"/>
+    </linearGradient>
+    <linearGradient id="pen" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffd66b"/>
+      <stop offset="1" stop-color="#ff9f43"/>
+    </linearGradient>
+    <filter id="soft" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="5" stdDeviation="7" flood-color="#10123a" flood-opacity="0.28"/>
+    </filter>
   </defs>
-  <rect width="256" height="256" rx="48" fill="url(#bg)"/>
-  <path d="M76 44h72l40 40v128a10 10 0 0 1-10 10H76a10 10 0 0 1-10-10V54a10 10 0 0 1 10-10z" fill="#ffffff"/>
-  <path d="M148 44l40 40h-30a10 10 0 0 1-10-10z" fill="#cfe0ff"/>
-  <rect x="90" y="118" width="76" height="14" rx="4" fill="#2f5fd6"/>
-  <rect x="90" y="144" width="76" height="14" rx="4" fill="#2f5fd6"/>
-  <rect x="90" y="170" width="48" height="14" rx="4" fill="#2f5fd6"/>
-  <g transform="translate(150,150)">
-    <circle cx="42" cy="42" r="46" fill="#1c9b5e" stroke="#ffffff" stroke-width="6"/>
-    <path d="M24 43l12 12 24-26" fill="none" stroke="#ffffff" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- squircle backdrop -->
+  <path d="M128 6c60 0 78 0 94 16s16 34 16 106-0 90-16 106-34 16-94 16-78 0-94-16S18 200 18 128 18 38 34 22 68 6 128 6z" fill="url(#bg)"/>
+  <!-- subtle top sheen -->
+  <path d="M128 6c60 0 78 0 94 16 10 10 14 22 15 48-30-20-70-30-109-30S49 50 19 70c1-26 5-38 15-48C50 6 68 6 128 6z" fill="#ffffff" opacity="0.10"/>
+
+  <!-- document -->
+  <g filter="url(#soft)">
+    <path d="M74 48h62l40 40v122a12 12 0 0 1-12 12H74a12 12 0 0 1-12-12V60a12 12 0 0 1 12-12z" fill="url(#sheet)"/>
+    <path d="M136 48l40 40h-28a12 12 0 0 1-12-12z" fill="url(#fold)"/>
+  </g>
+
+  <!-- text lines -->
+  <rect x="84" y="112" width="72" height="11" rx="5.5" fill="#5b3df0" opacity="0.85"/>
+  <rect x="84" y="134" width="72" height="11" rx="5.5" fill="#5b3df0" opacity="0.55"/>
+  <rect x="84" y="156" width="44" height="11" rx="5.5" fill="#5b3df0" opacity="0.35"/>
+
+  <!-- editing pen -->
+  <g transform="rotate(38 168 168)">
+    <rect x="150" y="120" width="30" height="86" rx="9" fill="url(#pen)"/>
+    <rect x="150" y="120" width="30" height="16" rx="8" fill="#ffffff" opacity="0.45"/>
+    <path d="M150 206h30l-15 26z" fill="#2a2450"/>
+    <path d="M157 216h16l-8 14z" fill="#0f0c26"/>
   </g>
 </svg>

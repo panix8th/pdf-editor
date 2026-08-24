@@ -15,6 +15,7 @@ const TYPE_LABELS = {
   image: 'Image',
   signature: 'Signature',
   rect: 'Rectangle',
+  ellipse: 'Ellipse',
   line: 'Line',
   arrow: 'Arrow',
   pen: 'Pen',

@@ -40,8 +40,9 @@ export default function PropertiesPanel() {
   };
 
   const showTextProps = selected ? selected.type === 'text' : doc.tool === 'text';
-  const showStrokeProps = selected ? ['rect', 'line', 'arrow', 'pen'].includes(selected.type) : ['rect', 'line', 'arrow', 'pen'].includes(doc.tool);
-  const showFillProps = selected ? selected.type === 'rect' : doc.tool === 'rect';
+  const SHAPE_STROKE_TYPES = ['rect', 'ellipse', 'line', 'arrow', 'pen'];
+  const showStrokeProps = SHAPE_STROKE_TYPES.includes(selected ? selected.type : doc.tool);
+  const showFillProps = ['rect', 'ellipse'].includes(selected ? selected.type : doc.tool);
   const showHighlightProps = selected ? selected.type === 'highlight' : doc.tool === 'highlight';
 
   return (

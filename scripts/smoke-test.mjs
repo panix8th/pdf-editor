@@ -123,6 +123,57 @@ async function main() {
   const layerCount = await win.locator('.layer-row').count();
   assert(layerCount >= 2, `Layers panel lists created objects (${layerCount})`);
 
+  // --- ellipse ---------------------------------------------------------
+  await win.locator('button.tbtn[title="Ellipse"]').click();
+  await win.mouse.move(box.x + 300, box.y + 150);
+  await win.mouse.down();
+  await win.mouse.move(box.x + 400, box.y + 220, { steps: 5 });
+  await win.mouse.up();
+  await win.waitForTimeout(200);
+  assert(
+    (await win.locator('.layer-row', { hasText: 'Ellipse' }).count()) === 1,
+    'ellipse tool creates an ellipse object'
+  );
+
+  // --- arrow: preview head must be a real polygon, not a shared <marker>.
+  // Two arrows in different colors used to collide on a single marker id
+  // ("arrowhead"), so both rendered with the first one's color.
+  await win.locator('button.tbtn[title="Arrow"]').click();
+  await win.mouse.move(box.x + 150, box.y + 300);
+  await win.mouse.down();
+  await win.mouse.move(box.x + 320, box.y + 360, { steps: 5 });
+  await win.mouse.up();
+  await win.waitForTimeout(250);
+  assert(
+    (await win.locator('.page-overlay svg polygon').count()) >= 1,
+    'arrow renders a solid polygon arrowhead'
+  );
+  assert(
+    (await win.locator('.page-overlay svg marker').count()) === 0,
+    'arrow uses no shared-id SVG marker'
+  );
+
+  // --- image: one click on the toolbar button inserts it ---------------
+  const imgPath = path.join(os.tmpdir(), `smoke-img-${Date.now()}.png`);
+  // 4x4 red PNG
+  await fs.writeFile(
+    imgPath,
+    Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAYAAACp8Z5+AAAAFElEQVR42mP8z8BQz0AEYBxVSF+FABJADveWkH6oAAAAAElFTkSuQmCC',
+      'base64'
+    )
+  );
+  await app.evaluate(({ dialog }, target) => {
+    dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [target] });
+  }, imgPath);
+  assert((await win.locator('.page-overlay img').count()) === 0, 'no image on the page before inserting');
+  await win.locator('button.tbtn[title="Insert an image (PNG/JPG)"]').click();
+  await win.waitForTimeout(1000);
+  assert(
+    (await win.locator('.page-overlay img').count()) === 1,
+    'a single Image-button click inserts an image (no second click needed)'
+  );
+
   await win.screenshot({ path: path.join(root, 'scratch-after-edits.png') });
 
   // --- real Save As, via a monkey-patched dialog so no UI is needed ----
@@ -148,8 +199,13 @@ async function main() {
   // just header bytes followed by garbage.
   const reloaded = await PDFDocument.load(saved);
   assert(reloaded.getPageCount() === 2, 'saved PDF reloads with the correct page count');
+  assert(
+    saved.toString('latin1').includes('/Image'),
+    'saved PDF embeds the inserted image as an XObject'
+  );
 
   await fs.unlink(savePath).catch(() => {});
+  await fs.unlink(imgPath).catch(() => {});
 
   await app.close();
 

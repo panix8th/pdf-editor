@@ -9,6 +9,7 @@ import {
 } from '../pdf/documentIO';
 import { setResource, getResource, deleteResource, addExternalSource, addExternalPdfjsDoc, addCustomFont } from './docResources';
 import { removePasswordProtection, UnsupportedEncryptionError, isStructurallyEncrypted } from '../pdf/security';
+import { placeImageFromDialog } from '../pdf/placeImage';
 
 const MAX_HISTORY = 60;
 
@@ -253,6 +254,30 @@ export const useStore = create((set, get) => ({
   },
   setTool(id, tool) {
     get().updateDoc(id, { tool, selection: null });
+  },
+
+  /**
+   * Inserts an image on the current page in one step: pick a file, drop it
+   * centered on the page, select it. Image is an action rather than a mode
+   * because a mode gave no hint that a second click on the page was needed
+   * to place anything - so the button looked like it did nothing.
+   */
+  async insertImage(id) {
+    const doc = get().documents[id];
+    if (!doc) return;
+    const page = doc.pages[doc.currentPage - 1];
+    if (!page) return;
+    const annId = await placeImageFromDialog(
+      id,
+      page.key,
+      null,
+      null,
+      get().addAnnotation,
+      get().setTool,
+      get().showToast,
+      { width: page.width, height: page.height }
+    );
+    if (annId) get().selectObject(id, page.key, annId);
   },
   setToolOptions(id, patch) {
     const doc = get().documents[id];
