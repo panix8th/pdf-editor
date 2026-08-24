@@ -4,6 +4,7 @@ import { useStore, getResource } from '../state/store';
 import { bakeDocument, mergePdfs, splitPdf, exportPagesAsImages } from '../pdf/documentIO';
 import { PDFDocument } from 'pdf-lib';
 import { applyPasswordProtection } from '../pdf/security';
+import { resolveAndCacheGoogleFont } from '../pdf/fetchAndCacheGoogleFont';
 
 export default function Dialogs({ dialog }) {
   const closeDialog = useStore((s) => s.closeDialog);
@@ -25,6 +26,7 @@ export default function Dialogs({ dialog }) {
       {dialog.type === 'verifySignatures' && <VerifySignaturesDialog />}
       {dialog.type === 'insertPages' && <InsertPagesDialog />}
       {dialog.type === 'fontPicker' && <FontPickerDialog {...dialog.props} />}
+      {dialog.type === 'googleFontPicker' && <GoogleFontDialog {...dialog.props} />}
       {dialog.type === 'about' && <AboutDialog />}
     </div>
   );
@@ -764,6 +766,72 @@ function FontPickerDialog({ docId, onPick }) {
           </div>
         </>
       )}
+    </Modal>
+  );
+}
+
+// ---------------------------------------------------------------------------
+
+function GoogleFontDialog({ docId, onPick }) {
+  const closeDialog = useStore((s) => s.closeDialog);
+  const registerCustomFont = useStore((s) => s.registerCustomFont);
+  const showToast = useStore((s) => s.showToast);
+  const [query, setQuery] = useState('');
+  const [bold, setBold] = useState(false);
+  const [italic, setItalic] = useState(false);
+  const [status, setStatus] = useState('idle'); // idle | loading | error
+
+  const apply = async () => {
+    const family = query.trim();
+    if (!family) return;
+    setStatus('loading');
+    const match = await resolveAndCacheGoogleFont(docId, [family], { bold, italic, registerCustomFont }).catch(() => null);
+    if (match) {
+      onPick({ fontId: match.fontId, fontFamily: match.fontFamily });
+      closeDialog();
+    } else {
+      setStatus('error');
+      showToast('error', `Couldn't find "${family}" on Google Fonts, or you're offline.`);
+    }
+  };
+
+  return (
+    <Modal title="Use a Google Font">
+      <p className="hint">
+        Type the exact name of any font from <span style={{ userSelect: 'text' }}>fonts.google.com</span> - e.g. "Roboto",
+        "Playfair Display", "Bebas Neue".
+      </p>
+      <div className="pp-row">
+        <label>Font name</label>
+        <input
+          className="field"
+          autoFocus
+          value={query}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            setStatus('idle');
+          }}
+          onKeyDown={(e) => e.key === 'Enter' && apply()}
+          placeholder="e.g. Roboto"
+        />
+      </div>
+      <div className="check-row">
+        <input type="checkbox" checked={bold} onChange={(e) => setBold(e.target.checked)} />
+        <span>Bold</span>
+      </div>
+      <div className="check-row">
+        <input type="checkbox" checked={italic} onChange={(e) => setItalic(e.target.checked)} />
+        <span>Italic</span>
+      </div>
+      {status === 'error' && <p className="error-text">Not found on Google Fonts (or no network access right now).</p>}
+      <div className="modal-actions">
+        <button className="btn" onClick={closeDialog}>
+          Cancel
+        </button>
+        <button className="btn primary" disabled={!query.trim() || status === 'loading'} onClick={apply}>
+          {status === 'loading' ? 'Fetching...' : 'Use This Font'}
+        </button>
+      </div>
     </Modal>
   );
 }

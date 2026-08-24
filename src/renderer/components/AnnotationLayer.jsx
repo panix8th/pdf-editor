@@ -11,8 +11,8 @@ import {
 } from '../pdf/coords';
 import { isCustomFont } from '../pdf/fonts';
 import { extractTextRuns, guessStandardFamily } from '../pdf/textRuns';
-import { resolveGoogleFontCandidate } from '../pdf/googleFontMap';
-import { getCachedGoogleFontId, cacheGoogleFontId } from '../state/docResources';
+import { resolveGoogleFontCandidates } from '../pdf/googleFontMap';
+import { resolveAndCacheGoogleFont } from '../pdf/fetchAndCacheGoogleFont';
 
 const BOX_TOOLS = new Set(['rect', 'highlight', 'redact']);
 const LINE_TOOLS = new Set(['line', 'arrow']);
@@ -120,27 +120,16 @@ export default function AnnotationLayer({ doc, page, pageIndex, pdfPage, scale, 
     });
     setEditingId(id);
 
-    const candidate = resolveGoogleFontCandidate(run.realFontName, run.fontFamilyHint);
-    if (!candidate) return;
-    const cacheKey = `${candidate}:${run.bold}:${run.italic}`;
-    const cachedFontId = getCachedGoogleFontId(doc.id, cacheKey);
-    if (cachedFontId) {
-      updateAnnotation(doc.id, page.key, id, { fontFamily: candidate, fontId: cachedFontId }, { record: false });
-      return;
-    }
-    window.pdfEditor
-      .fetchGoogleFont(candidate, run.bold, run.italic)
-      .then((result) => {
-        if (!result.ok) return;
-        const newFontId = `gfont-${candidate}-${Date.now()}`;
-        registerCustomFont(doc.id, newFontId, result.data, candidate);
-        cacheGoogleFontId(doc.id, cacheKey, newFontId);
-        updateAnnotation(doc.id, page.key, id, { fontFamily: candidate, fontId: newFontId }, { record: false });
+    const candidates = resolveGoogleFontCandidates(run.realFontName, run.fontFamilyHint);
+    if (candidates.length === 0) return;
+    resolveAndCacheGoogleFont(doc.id, candidates, { bold: run.bold, italic: run.italic, registerCustomFont })
+      .then((match) => {
+        if (match) updateAnnotation(doc.id, page.key, id, { fontFamily: match.fontFamily, fontId: match.fontId }, { record: false });
+        // Otherwise offline, none of the candidates exist on Google Fonts,
+        // or the request timed out - the annotation already has a
+        // sensible offline fallback font.
       })
-      .catch(() => {
-        // Offline, font not on Google Fonts, or the request timed out -
-        // the annotation already has a sensible offline fallback font.
-      });
+      .catch(() => {});
   };
 
   const commitNewShape = useCallback(

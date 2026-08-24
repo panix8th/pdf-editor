@@ -23,9 +23,9 @@ Fonts.
   covered with its sampled background color and the edit drawn on top -
   PDF has no portable way to rewrite a content stream in place, so this is
   the same approach every lightweight editor uses. Plus new text boxes
-  (font family/size/color/bold/italic/alignment,
-  standard fonts, any font installed on your PC via the Local Font Access
-  picker, or a loaded `.ttf`/`.otf`), images, rectangles, lines, arrows,
+  (font family/size/color/bold/italic/alignment, standard fonts, any font
+  installed on your PC via the Local Font Access picker, any font by name
+  from Google Fonts, or a loaded `.ttf`/`.otf`), images, rectangles, lines, arrows,
   freehand pen, highlights, and a redaction tool that rasterizes the
   affected page so the underlying content is genuinely removed, not just
   covered. A Layers panel shows every object on the page top-to-bottom
@@ -163,9 +163,18 @@ validate the highest-risk, hand-rolled pieces:
 - **System font access** (the "System Fonts..." picker) needs Chromium's
   Local Font Access API, which requires the user to grant permission the
   first time it's used; if it's unavailable or denied, "Load .ttf/.otf..."
-  still works as a direct fallback. Fetching fonts from Google Fonts was
-  intentionally not implemented, since it would require network access
-  this app otherwise never makes.
+  and "Google Fonts..." still work as direct fallbacks.
+- **Google Fonts matching** tries the PDF's exact font name against the
+  live Google Fonts catalog first, then a metric-compatible substitute
+  table for common proprietary fonts it doesn't have at all (Arial,
+  Calibri, Times New Roman, ...) - it isn't a fixed list, so most fonts
+  that are genuinely on Google Fonts resolve correctly even if not
+  explicitly named in the substitute table. A font that's neither on
+  Google Fonts nor in that table falls back to the closest built-in
+  standard font (still editable immediately - the fetch attempt never
+  blocks anything). The same "Google Fonts..." picker is also available
+  directly from the toolbar/properties panel to fetch any font by name,
+  independent of auto-detection.
 - **Password protection** implements the classic PDF **RC4 128-bit**
   Standard Security Handler (opens in every mainstream reader). Removing/
   editing a password-protected PDF that uses **AES** encryption (common

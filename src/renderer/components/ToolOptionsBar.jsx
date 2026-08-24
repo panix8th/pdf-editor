@@ -18,6 +18,7 @@ export default function ToolOptionsBar() {
   const setToolOptions = useStore((s) => s.setToolOptions);
   const registerCustomFont = useStore((s) => s.registerCustomFont);
   const openFontPicker = useStore((s) => s.openFontPicker);
+  const openGoogleFontPicker = useStore((s) => s.openGoogleFontPicker);
   const fontInputRef = useRef(null);
 
   if (!doc || doc.tool === 'select' || doc.selection) return null;
@@ -60,6 +61,9 @@ export default function ToolOptionsBar() {
           </select>
           <button className="tbtn" onClick={() => openFontPicker(doc.id, (patch) => set(patch))} title="Pick from fonts installed on this PC">
             System Fonts...
+          </button>
+          <button className="tbtn" onClick={() => openGoogleFontPicker(doc.id, (patch) => set(patch))} title="Fetch any font from Google Fonts">
+            Google Fonts...
           </button>
           <button className="tbtn" onClick={() => fontInputRef.current.click()}>
             Load .ttf/.otf...

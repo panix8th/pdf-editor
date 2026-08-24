@@ -9,6 +9,7 @@ export default function PropertiesPanel() {
   const setToolOptions = useStore((s) => s.setToolOptions);
   const registerCustomFont = useStore((s) => s.registerCustomFont);
   const openFontPicker = useStore((s) => s.openFontPicker);
+  const openGoogleFontPicker = useStore((s) => s.openGoogleFontPicker);
   const moveAnnotationLayer = useStore((s) => s.moveAnnotationLayer);
   const fontInputRef = useRef(null);
 
@@ -67,6 +68,11 @@ export default function PropertiesPanel() {
               <button className="btn" onClick={() => openFontPicker(doc.id, (patch) => target.set(patch))}>
                 System Fonts...
               </button>
+              <button className="btn" onClick={() => openGoogleFontPicker(doc.id, (patch) => target.set(patch))}>
+                Google Fonts...
+              </button>
+            </div>
+            <div className="btn-row">
               <button className="btn" onClick={() => fontInputRef.current.click()}>
                 Load .ttf / .otf...
               </button>

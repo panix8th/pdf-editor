@@ -27,15 +27,6 @@ const METRIC_COMPATIBLE = {
   'trebuchet ms': 'Roboto'
 };
 
-// Already on Google Fonts - use as-is when the PDF names one of these.
-const KNOWN_GOOGLE_FONTS = new Set([
-  'roboto', 'open sans', 'lato', 'montserrat', 'poppins', 'source sans pro',
-  'nunito', 'raleway', 'ubuntu', 'merriweather', 'playfair display', 'oswald',
-  'pt sans', 'noto sans', 'inter', 'work sans', 'rubik', 'mulish', 'karla',
-  'ibm plex sans', 'dm sans', 'quicksand', 'josefin sans', 'fira sans',
-  'arimo', 'tinos', 'cousine', 'carlito', 'caladea', 'gelasio'
-]);
-
 /** Strips subset tags ("ABCDEF+"), weight/style suffixes, and common
  * PostScript naming artifacts down to a bare family name for matching. */
 function normalize(name) {
@@ -47,14 +38,25 @@ function normalize(name) {
     .trim();
 }
 
-/** Returns a Google Fonts family name to try fetching, or null if this
- * font isn't a good candidate (caller falls back to the built-in guess). */
-export function resolveGoogleFontCandidate(realFontName, fontFamilyHint) {
-  const candidates = [normalize(realFontName), normalize(fontFamilyHint)].filter(Boolean);
-  for (const raw of candidates) {
-    const key = raw.toLowerCase();
-    if (KNOWN_GOOGLE_FONTS.has(key)) return raw;
-    if (METRIC_COMPATIBLE[key]) return METRIC_COMPATIBLE[key];
-  }
-  return null;
+/**
+ * Returns an ordered list of Google Fonts family names worth trying for
+ * this PDF font, most-faithful first. The caller (AnnotationLayer) tries
+ * each against the real Google Fonts catalog in order and keeps the first
+ * one that actually exists there - so this never needs to be an exhaustive
+ * "is this really on Google Fonts" list. It just needs to put the best
+ * guesses first:
+ *   1. The PDF's own font name, verbatim - covers every font that's
+ *      already on Google Fonts (Roboto, Open Sans, Montserrat, ... -
+ *      thousands of them) without maintaining a matching list here.
+ *   2. A metrics-compatible substitute for common proprietary fonts
+ *      (Arial -> Arimo, Calibri -> Carlito, ...), so a document using a
+ *      font Google Fonts doesn't have at all still gets something close.
+ */
+export function resolveGoogleFontCandidates(realFontName, fontFamilyHint) {
+  const candidates = [];
+  const raw = normalize(realFontName) || normalize(fontFamilyHint);
+  if (raw) candidates.push(raw);
+  const substitute = METRIC_COMPATIBLE[raw.toLowerCase()];
+  if (substitute) candidates.push(substitute);
+  return [...new Set(candidates)];
 }

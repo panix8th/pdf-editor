@@ -19,6 +19,25 @@ function snapshot(doc) {
   };
 }
 
+/** Makes a custom font's exact glyphs available to CSS `font-family` in
+ * this window - otherwise setting `fontFamily: 'Bebas Neue'` on an
+ * annotation's live-preview element does nothing useful, because the
+ * browser has no idea what "Bebas Neue" actually looks like (this is
+ * separate from embedding the font into the saved PDF via fontkit, which
+ * bakeDocument already does independently from the font bytes cached in
+ * docResources). Never throws - a failure here just means the live
+ * preview falls back to a generic font; the saved file is unaffected. */
+async function registerLiveFontFace(name, bytes) {
+  try {
+    const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+    const fontFace = new FontFace(name, buffer);
+    await fontFace.load();
+    document.fonts.add(fontFace);
+  } catch {
+    /* live preview only - saved output still embeds the real font bytes */
+  }
+}
+
 const defaultToolOptions = {
   fontFamily: 'Helvetica',
   fontId: null,
@@ -52,6 +71,7 @@ export const useStore = create((set, get) => ({
   toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
   openDialog: (type, props) => set({ dialog: { type, props: props || {} } }),
   openFontPicker: (docId, onPick) => set({ dialog: { type: 'fontPicker', props: { docId, onPick } } }),
+  openGoogleFontPicker: (docId, onPick) => set({ dialog: { type: 'googleFontPicker', props: { docId, onPick } } }),
   closeDialog: () => set({ dialog: null }),
   showToast: (type, message) => set({ toast: { id: uuid(), type, message } }),
   clearToast: () => set({ toast: null }),
@@ -391,6 +411,7 @@ export const useStore = create((set, get) => ({
     const doc = get().documents[id];
     const customFontsList = [...(doc.customFontsList || []), { id: fontId, name }];
     get().updateDoc(id, { customFontsList });
+    registerLiveFontFace(name, bytes);
   },
 
   // ------------------------------------------------------------------
