@@ -1,0 +1,55 @@
+name: Build and Release Windows EXE
+
+# Builds the app on a real Windows runner (no Wine cross-compilation) and
+# publishes the NSIS installer + portable exe as assets on a GitHub Release
+# whenever a version tag (e.g. v1.0.0) is pushed.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Branch/tag/commit to build'
+        required: false
+        default: 'claude/desktop-pdf-editor-app-4wyvnf'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref || github.ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - run: npm install
+
+      - run: npm run dist
+
+      - name: Determine release tag
+        id: tag
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          else
+            v=$(node -p "require('./package.json').version")
+            echo "tag=v${v}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: PDF Editor ${{ steps.tag.outputs.tag }}
+          files: |
+            release/*.exe
+          generate_release_notes: true
