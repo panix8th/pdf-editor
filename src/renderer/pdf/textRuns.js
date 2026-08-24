@@ -1,6 +1,8 @@
+import pdfjsLib from './pdfjsSetup';
+
 /**
  * Extracts every text run on a page (position + size in storage space, plus
- * a best-effort font family/size guess) so the viewer can offer "click
+ * an auto-detected font family/size/color) so the viewer can offer "click
  * existing text to edit it." pdf-lib/PDF in general has no supported way to
  * truly rewrite a content stream's text in place, so editing works by
  * covering the original run with a sampled background color and drawing
@@ -8,13 +10,85 @@
  * documentIO's `coverRect` handling) - the same cover-and-replace approach
  * used for redaction, just without permanently flattening the page.
  */
+
+function u8ToHex(r, g, b) {
+  return '#' + [r, g, b].map((v) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0')).join('');
+}
+
+/** Walks the page's low-level drawing operators to recover each showText
+ * call's actual fill color (RGB/Gray/CMYK), in the same order textContent
+ * items are produced - much more reliable than sampling rendered pixels,
+ * which is noisy for small/anti-aliased text. */
+async function extractTextColorsInOrder(pdfPage) {
+  const { OPS } = pdfjsLib;
+  const opList = await pdfPage.getOperatorList();
+  const colors = [];
+  let current = [0, 0, 0];
+
+  for (let i = 0; i < opList.fnArray.length; i++) {
+    const fn = opList.fnArray[i];
+    const args = opList.argsArray[i];
+    switch (fn) {
+      case OPS.setFillRGBColor:
+        current = [args[0], args[1], args[2]];
+        break;
+      case OPS.setFillGray: {
+        const g = args[0] * 255;
+        current = [g, g, g];
+        break;
+      }
+      case OPS.setFillCMYKColor: {
+        const [c, m, y, k] = args;
+        current = [255 * (1 - c) * (1 - k), 255 * (1 - m) * (1 - k), 255 * (1 - y) * (1 - k)];
+        break;
+      }
+      case OPS.showText:
+      case OPS.showSpacedText:
+      case OPS.nextLineShowText:
+      case OPS.nextLineSetSpacingShowText:
+        colors.push(u8ToHex(current[0], current[1], current[2]));
+        break;
+      default:
+        break;
+    }
+  }
+  return colors;
+}
+
+/** Best-effort lookup of the PDF's actual (embedded or standard-14) font
+ * name for a pdf.js internal font id, e.g. "ArialMT" or "Calibri-Bold" -
+ * pdf.js's public textContent API only gives a generic CSS fallback
+ * family, not this. Only available once the font has actually been
+ * loaded (during/after a render), so this can legitimately come back
+ * empty - callers must fall back gracefully. */
+function tryGetRealFontName(pdfPage, fontId) {
+  try {
+    if (pdfPage.commonObjs && pdfPage.commonObjs.has(fontId)) {
+      const fontObj = pdfPage.commonObjs.get(fontId);
+      return fontObj?.name || fontObj?.fallbackName || null;
+    }
+  } catch {
+    /* font not loaded yet - fine, caller falls back */
+  }
+  return null;
+}
+
 export async function extractTextRuns(pdfPage) {
   const textContent = await pdfPage.getTextContent();
   const viewport = pdfPage.getViewport({ scale: 1, rotation: 0 });
+  const colors = await extractTextColorsInOrder(pdfPage).catch(() => []);
   const runs = [];
 
   let i = 0;
-  for (const item of textContent.items) {
+  // textContent.items and the operator list's showText-family calls are
+  // both produced by a single linear walk of the same content stream, so
+  // - for the vast majority of real-world PDFs - they line up 1:1 in
+  // order, including whitespace-only items. Advance through `colors` in
+  // lockstep with every item (not just the ones we keep) so that
+  // alignment holds.
+  for (let itemIndex = 0; itemIndex < textContent.items.length; itemIndex++) {
+    const item = textContent.items[itemIndex];
+    const color = colors[itemIndex] || '#000000';
     if (!item.str || !item.str.trim()) continue;
     // item.transform = [a, b, c, d, tx, ty]: (a,b) is the (fontSize-scaled)
     // horizontal glyph-space basis vector, (c,d) the vertical one, (tx,ty)
@@ -43,18 +117,25 @@ export async function extractTextRuns(pdfPage) {
     const h = Math.max(6, Math.max(...ys) - y);
 
     const style = textContent.styles?.[item.fontName];
+    const realFontName = tryGetRealFontName(pdfPage, item.fontName);
     runs.push({
       id: `run-${i++}`,
       str: item.str,
       rect: { x, y, w, h },
       fontSize: Math.round(fontHeight * 100) / 100,
-      fontFamilyHint: style?.fontFamily || ''
+      fontFamilyHint: style?.fontFamily || '',
+      realFontName,
+      bold: /bold/i.test(realFontName || '') || (style && /bold/i.test(style.fontFamily || '')),
+      italic: /italic|oblique/i.test(realFontName || ''),
+      color
     });
   }
   return runs;
 }
 
-/** Map a pdf.js font-family hint to one of our embeddable standard fonts. */
+/** Map a pdf.js font-family hint to one of our embeddable standard fonts.
+ * Used only as the last-resort fallback when no real font name could be
+ * recovered and/or a matching Google Font couldn't be fetched. */
 export function guessStandardFamily(hint) {
   const h = (hint || '').toLowerCase();
   if (h.includes('courier') || h.includes('mono')) return 'Courier';

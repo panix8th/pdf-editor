@@ -11,6 +11,8 @@ import {
 } from '../pdf/coords';
 import { isCustomFont } from '../pdf/fonts';
 import { extractTextRuns, guessStandardFamily } from '../pdf/textRuns';
+import { resolveGoogleFontCandidate } from '../pdf/googleFontMap';
+import { getCachedGoogleFontId, cacheGoogleFontId } from '../state/docResources';
 
 const BOX_TOOLS = new Set(['rect', 'highlight', 'redact']);
 const LINE_TOOLS = new Set(['line', 'arrow']);
@@ -57,6 +59,7 @@ export default function AnnotationLayer({ doc, page, pageIndex, pdfPage, scale, 
   const selectObject = useStore((s) => s.selectObject);
   const setTool = useStore((s) => s.setTool);
   const showToast = useStore((s) => s.showToast);
+  const registerCustomFont = useStore((s) => s.registerCustomFont);
 
   const annotations = doc.annotations[page.key] || [];
   const tool = doc.tool;
@@ -97,6 +100,9 @@ export default function AnnotationLayer({ doc, page, pageIndex, pdfPage, scale, 
     const pad = 1;
     const box = { x: run.rect.x - pad, y: run.rect.y - pad, w: run.rect.w + pad * 2, h: run.rect.h + pad * 2 };
     const id = uuid();
+    // Create with an instant, offline guess so the editor opens immediately
+    // - never block on the network - then silently upgrade to the real
+    // font underneath the user if/once a Google Fonts match comes back.
     addAnnotation(doc.id, page.key, {
       id,
       type: 'text',
@@ -105,14 +111,36 @@ export default function AnnotationLayer({ doc, page, pageIndex, pdfPage, scale, 
       fontFamily: guessStandardFamily(run.fontFamilyHint),
       fontId: null,
       fontSize: run.fontSize,
-      color: '#000000',
-      bold: false,
-      italic: false,
+      color: run.color || '#000000',
+      bold: run.bold,
+      italic: run.italic,
       align: 'left',
       coverRect: box,
       coverColor: bgColor
     });
     setEditingId(id);
+
+    const candidate = resolveGoogleFontCandidate(run.realFontName, run.fontFamilyHint);
+    if (!candidate) return;
+    const cacheKey = `${candidate}:${run.bold}:${run.italic}`;
+    const cachedFontId = getCachedGoogleFontId(doc.id, cacheKey);
+    if (cachedFontId) {
+      updateAnnotation(doc.id, page.key, id, { fontFamily: candidate, fontId: cachedFontId }, { record: false });
+      return;
+    }
+    window.pdfEditor
+      .fetchGoogleFont(candidate, run.bold, run.italic)
+      .then((result) => {
+        if (!result.ok) return;
+        const newFontId = `gfont-${candidate}-${Date.now()}`;
+        registerCustomFont(doc.id, newFontId, result.data, candidate);
+        cacheGoogleFontId(doc.id, cacheKey, newFontId);
+        updateAnnotation(doc.id, page.key, id, { fontFamily: candidate, fontId: newFontId }, { record: false });
+      })
+      .catch(() => {
+        // Offline, font not on Google Fonts, or the request timed out -
+        // the annotation already has a sensible offline fallback font.
+      });
   };
 
   const commitNewShape = useCallback(

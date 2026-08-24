@@ -5,6 +5,7 @@ const path = require('path');
 const fs = require('fs/promises');
 const { buildMenu } = require('./menu');
 const { signWithP12, verifySignatures } = require('./signing');
+const { fetchGoogleFont } = require('./googleFonts');
 
 const isDev = process.env.NODE_ENV === 'development';
 
@@ -197,3 +198,12 @@ ipcMain.handle('sign:verify', async (_evt, pdfBytes) => {
 });
 
 ipcMain.handle('app:getVersion', () => app.getVersion());
+
+ipcMain.handle('fonts:fetchGoogleFont', async (_evt, { family, bold, italic }) => {
+  try {
+    const data = await fetchGoogleFont(family, { bold, italic });
+    return { ok: true, data, family };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});

@@ -49,3 +49,15 @@ export function addCustomFont(docId, fontId, bytes, name) {
   customFonts.set(fontId, { bytes, name });
   setResource(docId, { customFonts });
 }
+
+/** googleFontCache: Map<"family:bold:italic", fontId> - avoids re-fetching
+ * the same Google Font repeatedly while editing multiple runs in one doc. */
+export function getCachedGoogleFontId(docId, cacheKey) {
+  return resources.get(docId)?.googleFontCache?.get(cacheKey);
+}
+export function cacheGoogleFontId(docId, cacheKey, fontId) {
+  const r = resources.get(docId) || {};
+  const googleFontCache = r.googleFontCache || new Map();
+  googleFontCache.set(cacheKey, fontId);
+  setResource(docId, { googleFontCache });
+}

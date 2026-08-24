@@ -1,10 +1,13 @@
 # PDF Editor
 
-A lightweight, fully offline desktop PDF editor for Windows - view, edit,
-annotate, sign, and save PDFs, packaged as a single installable `.exe`
-(and a portable `.exe`). Built with Electron + React, [pdf.js](https://mozilla.github.io/pdf.js/)
+A lightweight, offline-by-default desktop PDF editor for Windows - view,
+edit, annotate, sign, and save PDFs, packaged as a single installable
+`.exe` (and a portable `.exe`). Built with Electron + React, [pdf.js](https://mozilla.github.io/pdf.js/)
 for rendering and [pdf-lib](https://pdf-lib.js.org/) for editing. No
-telemetry, no network access - everything runs on your machine.
+telemetry, ever. The one deliberate exception to "no network access" is
+described in [Offline / privacy](#offline--privacy) below: matching the
+original font when editing existing text can fetch that font from Google
+Fonts.
 
 ## Features
 
@@ -12,11 +15,15 @@ telemetry, no network access - everything runs on your machine.
   single-page scrolling, zoom / fit-width / fit-page, page-number jump,
   thumbnail sidebar with drag-to-reorder, clickable outline/bookmarks,
   full-text search with highlighting and next/previous navigation.
-- **Editing** - click directly on existing PDF text to edit it in place
-  (the original run is covered with its sampled background color and the
-  edit drawn on top - PDF has no portable way to rewrite a content stream
-  in place, so this is the same approach every lightweight editor uses),
-  plus new text boxes (font family/size/color/bold/italic/alignment,
+- **Editing** - click directly on existing PDF text to edit it in place:
+  font, size, color, and bold/italic are auto-detected from the PDF
+  itself, and the app tries to match the *original font* (fetching it
+  from Google Fonts if needed - see [Offline / privacy](#offline--privacy))
+  rather than falling back to a generic substitute. The original run is
+  covered with its sampled background color and the edit drawn on top -
+  PDF has no portable way to rewrite a content stream in place, so this is
+  the same approach every lightweight editor uses. Plus new text boxes
+  (font family/size/color/bold/italic/alignment,
   standard fonts, any font installed on your PC via the Local Font Access
   picker, or a loaded `.ttf`/`.otf`), images, rectangles, lines, arrows,
   freehand pen, highlights, and a redaction tool that rasterizes the
@@ -143,12 +150,16 @@ validate the highest-risk, hand-rolled pieces:
 
 ## Known limitations
 
-- **Editing existing text** covers the original run (background-color
+- **Editing existing text** covers the original run (background color
   sampled from the rendered page) and draws the edit on top, rather than
   rewriting the PDF's content stream - there's no portable, general way to
-  do the latter. It's click-target granularity is per text run as pdf.js
+  do the latter. Its click-target granularity is per text run as pdf.js
   reports them, which is usually a word or short phrase rather than an
-  entire sentence.
+  entire sentence. Font/color detection correlates pdf.js's text-content
+  items with its low-level drawing operators by sequence order, which
+  holds for the vast majority of real PDFs but can occasionally mismatch
+  on documents with unusual kerning-adjustment structures - the color/font
+  picker in the properties panel is always right there to fix it.
 - **System font access** (the "System Fonts..." picker) needs Chromium's
   Local Font Access API, which requires the user to grant permission the
   first time it's used; if it's unavailable or denied, "Load .ttf/.otf..."
@@ -176,7 +187,23 @@ validate the highest-risk, hand-rolled pieces:
 
 ## Offline / privacy
 
-The app makes no network requests: `connect-src 'none'` is set in the
-renderer's CSP, pdf.js's font/CMap fetching and evaluation are disabled,
-and Electron's auto-updater is not wired up. Everything - rendering,
-editing, signing, encryption - happens locally.
+`connect-src 'none'` is set in the renderer's CSP - the UI itself can
+never make a network request, full stop. pdf.js's font/CMap fetching and
+evaluation are disabled, and Electron's auto-updater is not wired up.
+Everything - rendering, editing, signing, encryption - happens locally.
+
+**One deliberate exception**: when you click existing PDF text to edit it,
+the app tries to match the original font so the edit doesn't fall back to
+generic Helvetica/Times/Courier. It does this by resolving the PDF's real
+font name (Arial, Calibri, Roboto, ...) to a Google Fonts family - either
+directly, or via a metric-compatible substitute for common proprietary
+fonts (Arial→Arimo, Times New Roman→Tinos, Calibri→Carlito, etc.) - and
+fetching that one font file. This request is made by the **main process
+only** (`src/main/googleFonts.js`), never by the renderer's own network
+stack, and only fires on that explicit user action - never automatically
+on open or in the background. If it's offline or the font isn't found, it
+silently falls back to the closest built-in standard font and the edit
+still works immediately (the text box is usable right away; the font
+upgrades in place if/when the fetch succeeds). Font size and text color
+for edited runs are detected directly from the PDF's own geometry and
+fill-color operators - no network involved for either.

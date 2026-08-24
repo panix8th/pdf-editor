@@ -21,6 +21,12 @@ contextBridge.exposeInMainWorld('pdfEditor', {
 
   getAppVersion: () => ipcRenderer.invoke('app:getVersion'),
 
+  // The one deliberate exception to this app's offline-by-default design:
+  // fetches a real font file from Google Fonts (main process only, never
+  // exposed to the renderer's own network stack) so an edited run of
+  // existing PDF text can keep looking like its original font.
+  fetchGoogleFont: (family, bold, italic) => ipcRenderer.invoke('fonts:fetchGoogleFont', { family, bold, italic }),
+
   // Resolve a native filesystem path for a File dragged from the OS, so we
   // can read it (and files referenced relative to it) via IPC.
   getPathForFile: (file) => webUtils.getPathForFile(file),
