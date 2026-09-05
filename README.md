@@ -39,9 +39,8 @@ Fonts.
   original characters stay in the text layer, invisible but still
   findable - the Redact tool is what actually destroys content.
 - **Annotating** - new text boxes (font family/size/color/bold/italic/
-  alignment, standard fonts, any font installed on your PC via the Local
-  Font Access picker, any font by name from Google Fonts, or a loaded
-  `.ttf`/`.otf`), images (one click inserts a PNG/JPG on the current page,
+  alignment, standard fonts, any font installed on your PC, any font by
+  name from Google Fonts, or a loaded `.ttf`/`.otf`), images (one click inserts a PNG/JPG on the current page,
   ready to drag/resize), rectangles, ellipses, lines, arrows, freehand
   pen, highlights, and a redaction tool that rasterizes the affected page
   so the underlying content is genuinely removed, not just covered. A
@@ -52,6 +51,18 @@ Fonts.
   (Ctrl+Z/Y, Ctrl+S, Ctrl+O, Ctrl+F, Delete, ...). Undo steps follow
   whole actions, not keystrokes: typing a word or dragging a slider is one
   step, not thirty.
+- **Fonts** - a Fonts panel that checks the document against this machine.
+  Every font the PDF uses is listed as **Embedded** (glyphs travel inside
+  the file), **Built-in** (one of the 14 fonts every reader provides),
+  **Installed** (not embedded, but this PC has it) or **Missing** - the
+  last of which is otherwise invisible: your reader silently substitutes
+  something else and the page stops looking like what its author sent. A
+  missing font can be downloaded and handed to the OS installer in one
+  click, or looked up in the browser when it isn't open-licensed. Below
+  that, every font installed on this machine, previewed in itself and
+  applied to the selected text (or to the Text tool's defaults) with a
+  click - the chosen face is embedded into the PDF, so it renders
+  everywhere, not just here.
 - **Forms** - detects existing AcroForm fields (text, checkbox, radio,
   dropdown) and fills them from a side panel. The Field tool also adds new
   fillable fields to a PDF that doesn't have them: draw a box, pick a type
@@ -68,7 +79,7 @@ Fonts.
 - **UI** - custom frameless title bar (app mark, document tabs, window
   controls) with a themed menu bar and grouped icon toolbar underneath;
   an icon rail + collapsible, drag-resizable side panel (thumbnails/
-  outline/search/forms/layers); a floating view dock over the canvas
+  outline/search/forms/fonts/layers); a floating view dock over the canvas
   (current tool, single-page/continuous, rotate); a properties panel
   that's contextual to the active tool even with nothing selected yet;
   light/dark theme with three accent colors (lilac/orchid/periwinkle),
@@ -101,7 +112,8 @@ pdf-editor/
 ├─ src/
 │  ├─ main/              Electron main process
 │  │  ├─ main.js         App lifecycle, frameless window, all ipcMain handlers (file I/O, dialogs, window controls)
-│  │  └─ signing.js        Digital signature creation + verification (node-forge, @signpdf)
+│  │  ├─ signing.js        Digital signature creation + verification (node-forge, @signpdf)
+│  │  └─ systemFonts.js    Reads every installed font off disk (no permission prompt), cached
 │  ├─ preload/
 │  │  └─ preload.js       contextBridge API exposed to the renderer as `window.pdfEditor`
 │  └─ renderer/           React app (loaded via Vite)
@@ -110,9 +122,10 @@ pdf-editor/
 │     │  ├─ TitleBar.jsx     Frameless custom chrome: mark, doc tabs, minimize/maximize/close
 │     │  ├─ MenuBar.jsx      Themed File/Edit/Annotate/Sign/Page/View/Help dropdowns + theme/accent
 │     │  ├─ Toolbar.jsx      Grouped icon toolbar (file, history, tools, signing, zoom/page)
-│     │  ├─ Sidebar.jsx      Icon rail + resizable side panel (thumbnails/outline/search/forms/layers)
+│     │  ├─ Sidebar.jsx      Icon rail + resizable side panel (thumbnails/outline/search/forms/fonts/layers)
 │     │  ├─ Viewer.jsx       Page rendering + the floating view dock
 │     │  ├─ AnnotationLayer.jsx  Interactive overlay: text selection, edit-in-place, shapes
+│     │  ├─ FontsPanel.jsx    Document font check + installed-font browser/applier
 │     │  ├─ PropertiesPanel.jsx  Contextual to the active tool/selection
 │     │  ├─ Icons.jsx        Shared 20x20-grid stroke icon set
 │     │  ├─ PaperlightMark.jsx  The brand mark (see assets/brand/)
@@ -133,11 +146,14 @@ pdf-editor/
 │        ├─ textRuns.js    Text runs on a page (geometry, font, color) + their content-stream operator index
 │        ├─ textSelection.js  Character-level selection geometry over those runs
 │        ├─ contentStreamText.js  Content-stream surgery: makes edited glyphs invisible in place
+│        ├─ fontInventory.js  Which fonts a PDF uses, and whether this PC can render them
+│        ├─ systemFontMatch.js  Matching a PDF's font name against the installed ones
 │        └─ textSearch.js  Full-text search over a pdf.js document
 ├─ scripts/
 │  ├─ verify-encryption.mjs  Standalone round-trip test for security.js (see Testing)
 │  ├─ text-surgery-test.mjs  Tokenizer + visual proof that hiding a text run works (see Testing)
 │  ├─ text-search-test.mjs   Search over real pdf.js output, incl. phrases split across items
+│  ├─ fonts-test.mjs         The font check + applier, end to end in the real app
 │  ├─ smoke-test.mjs         Headless Electron smoke test via Playwright
 │  └─ make-icons.mjs         Regenerates build/icon.png + build/icon.ico from scripts/icon.svg
 ├─ assets/brand/          Paperlight brand assets (mark, wordmark, icon source) + their own README
@@ -225,6 +241,12 @@ hand-rolled pieces rather than aiming for blanket coverage:
   including the case that actually breaks naive implementations: pdf.js
   splits a line into several "items", so a multi-word query usually
   straddles a boundary and searching item-by-item finds nothing.
+- `npm run test:fonts` - drives the Fonts panel in the real app: the
+  installed-font list has to populate with **no permission prompt** (the
+  old picker's whole failure mode), the document check has to tell
+  embedded, built-in and missing fonts apart on a PDF built to contain all
+  three, and applying an installed font has to end up embedded in the
+  saved file.
 - `npm run test:smoke` - launches the real packaged app under
   Playwright/Xvfb and drives it end to end: drag-select text on the page,
   Ctrl+C, "Edit text", draw every shape, insert images (including a JPEG
@@ -259,24 +281,35 @@ hand-rolled pieces rather than aiming for blanket coverage:
   sequence order; the app verifies the two counts agree before touching
   anything and falls back to a cover rectangle when they don't, so a
   mismatch degrades rather than corrupts.
-- **Automatic font matching for click-to-edit-text** tries, in order: (1)
-  the exact original font if it's already installed on this PC (via
-  Chromium's Local Font Access API - no network, no substitute, the real
-  glyphs; this is why editing a Word-exported PDF on Windows usually
-  matches Calibri/Cambria/Segoe UI/Arial/Times New Roman/Courier New
-  perfectly, since those ship with Windows), (2) that same name against
-  the live Google Fonts catalog, (3) a metric-compatible substitute for
-  common proprietary fonts Google Fonts doesn't have at all. None of this
-  is a fixed lookup list for step 1/2 - any installed or Google-hosted
-  font resolves correctly on its own. Only a font that's in neither place
-  falls back to the closest built-in standard font (still editable
-  immediately either way - matching happens in the background and never
-  blocks the edit). Local Font Access needs the user to grant permission
-  the first time it's used; if it's unavailable/denied, "Load .ttf/.otf..."
-  and "Google Fonts..." still work as direct fallbacks.
-- The "System Fonts..." and "Google Fonts..." pickers are also available
-  directly from the toolbar/properties panel to fetch any font by name,
-  independent of auto-detection.
+- **Installed fonts are read off disk** by the main process (the OS font
+  directories, including Windows' per-user `%LOCALAPPDATA%` one), not
+  through Chromium's Local Font Access API. That API needs a permission
+  grant, only works from a user gesture, and returns nothing at all on
+  some systems - so the old picker regularly showed an empty list. Reading
+  the directories has none of those limits, and every web permission is
+  now denied outright. Faces are identified by the font's own name tables
+  via fontkit, and a face inside a `.ttc`/`.otc` collection (Cambria among
+  them, which is all over Office-exported PDFs) is rebuilt as a standalone
+  font so it can actually be embedded rather than merely listed. The index
+  is cached between runs, so only the first scan pays to parse every file.
+- **Automatic font matching for edited text** tries, in order: (1) the
+  exact original font if it's installed on this PC - no network, no
+  substitute, the real glyphs; this is why editing a Word-exported PDF on
+  Windows usually matches Calibri/Cambria/Segoe UI/Arial/Times New Roman/
+  Courier New perfectly, since those ship with Windows; (2) that same name
+  against the live Google Fonts catalog; (3) a metric-compatible
+  substitute for common proprietary fonts Google Fonts doesn't carry.
+  Steps 1 and 2 are not lookup lists - any installed or Google-hosted font
+  resolves on its own name. Only a font in neither place falls back to the
+  closest built-in standard font, and the edit is usable immediately
+  either way: matching happens in the background and never blocks it.
+- **Downloading a missing font** can only go as far as the OS allows.
+  Google Fonts carries open-licensed families only, so proprietary ones
+  (Segoe UI, Calibri) aren't fetchable - "Find online" opens a browser
+  search instead. Even for fonts it can fetch, installing system-wide
+  needs elevation this app deliberately never asks for: the file is
+  downloaded and handed to the OS font installer, and the final Install
+  click stays with you.
 - **Password protection** implements the classic PDF **RC4 128-bit**
   Standard Security Handler (opens in every mainstream reader). Removing/
   editing a password-protected PDF that uses **AES** encryption (common
@@ -313,9 +346,15 @@ hand-rolled pieces rather than aiming for blanket coverage:
 ## Offline / privacy
 
 `connect-src 'none'` is set in the renderer's CSP - the UI itself can
-never make a network request, full stop. pdf.js's font/CMap fetching and
+never make a network request, full stop. Every web permission is denied
+outright (camera, mic, geolocation, notifications, and Local Font Access
+too - installed fonts are read from disk by the main process instead, so
+the renderer never needs to ask). pdf.js's font/CMap fetching and
 evaluation are disabled, and Electron's auto-updater is not wired up.
 Everything - rendering, editing, signing, encryption - happens locally.
+
+Reading the OS font directories is a local disk read, not a network one,
+and nothing about your installed fonts leaves the machine.
 
 **One deliberate exception**: when you click existing PDF text to edit it,
 the app tries to match the original font so the edit doesn't fall back to

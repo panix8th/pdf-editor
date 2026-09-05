@@ -5,6 +5,8 @@ import { bakeDocument, mergePdfs, splitPdf, exportPagesAsImages } from '../pdf/d
 import { PDFDocument } from 'pdf-lib';
 import { applyPasswordProtection } from '../pdf/security';
 import { resolveAndCacheGoogleFont } from '../pdf/fetchAndCacheGoogleFont';
+import { loadSystemFontFamilies, loadFaceBytes } from '../pdf/systemFontMatch';
+import { pickFace } from '../pdf/fontInventory';
 import PaperlightMark from './PaperlightMark.jsx';
 
 export default function Dialogs({ dialog }) {
@@ -714,103 +716,88 @@ function InsertPagesDialog() {
 
 // ---------------------------------------------------------------------------
 
+/**
+ * Every font installed on this machine, listed straight from the OS font
+ * directories by the main process. It used to go through Chromium's
+ * `queryLocalFonts()`, which meant a permission prompt, a "Continue" step
+ * before anything loaded, and an empty list on any system that doesn't
+ * expose the API - so the picker frequently showed nothing at all.
+ */
 function FontPickerDialog({ docId, onPick }) {
   const closeDialog = useStore((s) => s.closeDialog);
   const registerCustomFont = useStore((s) => s.registerCustomFont);
   const showToast = useStore((s) => s.showToast);
-  const [state, setState] = useState('idle'); // idle | loading | denied | unsupported | ready
-  const [fonts, setFonts] = useState([]);
+  const [families, setFamilies] = useState(null);
   const [query, setQuery] = useState('');
   const [applying, setApplying] = useState(null);
+  const [error, setError] = useState(null);
 
-  const load = async () => {
-    if (typeof window.queryLocalFonts !== 'function') {
-      setState('unsupported');
-      return;
-    }
-    setState('loading');
-    try {
-      const list = await window.queryLocalFonts();
-      // One entry per family, remembering its "regular"-ish face where
-      // possible (queryLocalFonts returns one FontData per face/style).
-      const byFamily = new Map();
-      for (const f of list) {
-        if (!byFamily.has(f.family)) byFamily.set(f.family, f);
-        else if (/regular/i.test(f.style)) byFamily.set(f.family, f);
-      }
-      setFonts([...byFamily.values()].sort((a, b) => a.family.localeCompare(b.family)));
-      setState('ready');
-    } catch (err) {
-      setState(err.name === 'NotAllowedError' ? 'denied' : 'unsupported');
-    }
-  };
+  useEffect(() => {
+    let cancelled = false;
+    loadSystemFontFamilies()
+      .then((list) => {
+        if (cancelled) return;
+        setFamilies(list);
+        if (list.length === 0) setError('No font files were found in this system\u2019s font directories.');
+      })
+      .catch((err) => {
+        if (!cancelled) setError(err.message);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
-  const pick = async (fontData) => {
-    setApplying(fontData.family);
+  const pick = async (family) => {
+    setApplying(family.family);
     try {
-      const blob = await fontData.blob();
-      const buf = await blob.arrayBuffer();
-      const fontId = `sysfont-${Date.now()}`;
-      registerCustomFont(docId, fontId, new Uint8Array(buf), fontData.family);
-      onPick({ fontId, fontFamily: fontData.family });
+      const face = pickFace(family.faces, {});
+      const { bytes, family: realName } = await loadFaceBytes(face);
+      const fontId = `sysfont-${face.postscriptName}-${Date.now()}`;
+      registerCustomFont(docId, fontId, bytes, realName);
+      onPick({ fontId, fontFamily: realName });
       closeDialog();
     } catch (err) {
-      showToast('error', `Could not load "${fontData.family}": ${err.message}`);
+      showToast('error', `Could not load "${family.family}": ${err.message}`);
     }
     setApplying(null);
   };
 
-  const filtered = fonts.filter((f) => f.family.toLowerCase().includes(query.toLowerCase()));
+  const q = query.trim().toLowerCase();
+  const filtered = (families || []).filter((f) => f.family.toLowerCase().includes(q));
 
   return (
     <Modal title="Fonts Installed on This PC" wide>
-      {state === 'idle' && (
+      {families === null && !error && <p>Reading installed fonts...</p>}
+      {error && (
         <>
-          <p>Reads the list of fonts installed on your computer so you can embed one directly - nothing leaves your machine.</p>
-          <div className="modal-actions">
-            <button className="btn" onClick={closeDialog}>Cancel</button>
-            <button className="btn primary" onClick={load}>Continue</button>
-          </div>
+          <p className="error-text">{error}</p>
+          <p className="hint">You can still load a specific font file with "Load .ttf/.otf..." instead.</p>
         </>
       )}
-      {state === 'loading' && <p>Reading installed fonts...</p>}
-      {state === 'unsupported' && (
+      {families !== null && families.length > 0 && (
         <>
-          <p className="error-text">
-            Your system doesn't expose installed fonts to the app (the Local Font Access API isn't available here).
+          <p className="hint" style={{ marginTop: 0 }}>
+            {families.length} families found. The one you pick is embedded into the PDF, so it renders everywhere - not
+            just on machines that have it.
           </p>
-          <p className="hint">You can still load a specific font file with "Load .ttf/.otf..." instead.</p>
-          <div className="modal-actions">
-            <button className="btn primary" onClick={closeDialog}>Close</button>
-          </div>
-        </>
-      )}
-      {state === 'denied' && (
-        <>
-          <p className="error-text">Font access was denied.</p>
-          <p className="hint">You can still load a specific font file with "Load .ttf/.otf..." instead.</p>
-          <div className="modal-actions">
-            <button className="btn primary" onClick={closeDialog}>Close</button>
-          </div>
-        </>
-      )}
-      {state === 'ready' && (
-        <>
           <input className="field" placeholder="Filter fonts..." value={query} onChange={(e) => setQuery(e.target.value)} autoFocus />
           <div className="font-list">
-            {filtered.map((f) => (
-              <div key={f.postscriptName} className="font-list-item" style={{ fontFamily: f.family }} onClick={() => pick(f)}>
-                {f.family}
-                {applying === f.family && <span className="hint"> loading...</span>}
+            {filtered.map((family) => (
+              <div key={family.family} className="font-list-item" onClick={() => pick(family)}>
+                <span style={{ fontFamily: `"${family.family}", sans-serif` }}>{family.family}</span>
+                {applying === family.family && <span className="hint"> embedding...</span>}
               </div>
             ))}
             {filtered.length === 0 && <div className="hint">No matching fonts.</div>}
           </div>
-          <div className="modal-actions">
-            <button className="btn" onClick={closeDialog}>Cancel</button>
-          </div>
         </>
       )}
+      <div className="modal-actions">
+        <button className="btn primary" onClick={closeDialog}>
+          Close
+        </button>
+      </div>
     </Modal>
   );
 }

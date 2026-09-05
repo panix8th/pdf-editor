@@ -138,6 +138,16 @@ export const IconLayers = ({ size = 17 }) =>
       <path d="M3 11l7 4 7-4" />
     </>
   ,1.5);
+// A serif "A" on a baseline - the conventional shorthand for typography.
+export const IconFonts = ({ size = 17 }) =>
+  base(
+    size,
+    <>
+      <path d="M4.5 14.5L10 4.5l5.5 10" />
+      <path d="M6.6 10.8h6.8" />
+      <path d="M3 17h14" />
+    </>
+  ,1.5);
 export const IconSinglePage = ({ size = 15 }) => base(size, <rect x="5" y="3" width="10" height="14" rx="1.5" />, 1.5);
 export const IconContinuous = ({ size = 15 }) =>
   base(

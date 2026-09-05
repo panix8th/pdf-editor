@@ -55,6 +55,19 @@ contextBridge.exposeInMainWorld('pdfEditor', {
   // existing PDF text can keep looking like its original font.
   fetchGoogleFont: (family, bold, italic) => ipcRenderer.invoke('fonts:fetchGoogleFont', { family, bold, italic }),
 
+  // Installed fonts, read off disk by the main process. This replaces
+  // Chromium's queryLocalFonts(), which is permission-gated, needs a user
+  // gesture, and returns nothing on many systems.
+  fonts: {
+    listSystem: (opts) => ipcRenderer.invoke('fonts:listSystem', opts || {}),
+    loadFace: (fontPath, postscriptName) => ipcRenderer.invoke('fonts:loadFace', { path: fontPath, postscriptName }),
+    // Downloads a missing font and hands it to the OS installer.
+    downloadForInstall: (family, bold, italic) => ipcRenderer.invoke('fonts:downloadForInstall', { family, bold, italic }),
+    // Opens the font's page in the default browser. Takes a family name,
+    // not a URL - the main process builds the link itself.
+    openSpecimen: (family) => ipcRenderer.invoke('fonts:openSpecimen', family)
+  },
+
   // Resolve a native filesystem path for a File dragged from the OS, so we
   // can read it (and files referenced relative to it) via IPC.
   getPathForFile: (file) => webUtils.getPathForFile(file),

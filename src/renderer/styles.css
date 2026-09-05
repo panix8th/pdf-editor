@@ -643,6 +643,111 @@ button {
   background: var(--surface2);
 }
 
+/* ---------- Fonts panel ---------- */
+.fonts-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.fonts-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--mute);
+  /* The panel can be dragged down to 200px; a wrapped two-line heading
+     next to a wrapped button label looks broken, so both stay on one
+     line and the heading ellipsises instead. */
+  white-space: nowrap;
+}
+.fonts-section-head > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.btn-sm {
+  padding: 3px 8px;
+  font-size: 11px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.font-warning {
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface2);
+  color: var(--dim);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+.font-row {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border-soft);
+}
+.font-row:last-of-type {
+  border-bottom: none;
+}
+.font-row-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.font-row-name {
+  font-size: 14px;
+  color: var(--text);
+  /* Long PostScript names must not push the status chip off the panel. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.font-row-meta {
+  margin-top: 1px;
+  font-size: 10.5px;
+  color: var(--mute);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.font-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.font-chip {
+  flex-shrink: 0;
+  padding: 2px 7px;
+  border-radius: 20px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  border: 1px solid transparent;
+}
+.font-chip.ok {
+  color: var(--dim);
+  border-color: var(--border);
+}
+.font-chip.warn {
+  color: var(--danger);
+  border-color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+}
+
+/* In the side panel the list shares the panel's scroll rather than
+   carrying its own - it is the last thing in the panel. */
+.fonts-panel .font-list {
+  max-height: none;
+}
+
 /* ---------- Layout ---------- */
 .main-area {
   flex: 1;

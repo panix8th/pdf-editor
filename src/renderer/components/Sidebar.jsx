@@ -1,14 +1,16 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useStore, getResource } from '../state/store';
 import { searchDocument } from '../pdf/textSearch';
-import { IconPages, IconOutline, IconSearch, IconForms, IconLayers } from './Icons.jsx';
+import { IconPages, IconOutline, IconSearch, IconForms, IconLayers, IconFonts } from './Icons.jsx';
 import { FIELD_TYPE_LABELS } from '../pdf/formFields';
+import FontsPanel from './FontsPanel.jsx';
 
 const TABS = [
   { id: 'thumbnails', label: 'Pages', icon: IconPages },
   { id: 'outline', label: 'Outline', icon: IconOutline },
   { id: 'search', label: 'Search', icon: IconSearch },
   { id: 'forms', label: 'Forms', icon: IconForms },
+  { id: 'fonts', label: 'Fonts', icon: IconFonts },
   { id: 'layers', label: 'Layers', icon: IconLayers }
 ];
 
@@ -121,6 +123,7 @@ export default function Sidebar() {
             {doc && sidebarTab === 'outline' && <Outline doc={doc} />}
             {doc && sidebarTab === 'search' && <SearchPanel doc={doc} />}
             {doc && sidebarTab === 'forms' && <FormsPanel doc={doc} />}
+            {doc && sidebarTab === 'fonts' && <FontsPanel doc={doc} />}
             {doc && sidebarTab === 'layers' && <LayersPanel doc={doc} />}
           </div>
           {doc && sidebarTab === 'thumbnails' && (

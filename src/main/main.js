@@ -1,10 +1,11 @@
 'use strict';
 
-const { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, session } = require('electron');
+const { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, session, shell } = require('electron');
 const path = require('path');
 const fs = require('fs/promises');
 const { signWithP12, verifySignatures } = require('./signing');
 const { fetchGoogleFont } = require('./googleFonts');
+const systemFonts = require('./systemFonts');
 
 const isDev = process.env.NODE_ENV === 'development';
 
@@ -114,15 +115,16 @@ if (!gotLock) {
   });
 
   app.whenReady().then(() => {
-    // Only 'local-fonts' is ever granted (used for the "System Fonts..."
-    // picker so users can embed a font already installed on their PC).
-    // Everything else (camera, mic, geolocation, notifications, ...) stays
-    // denied - this app has no use for them and it keeps the offline/
-    // privacy posture honest.
-    session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
-      callback(permission === 'local-fonts');
-    });
-    session.defaultSession.setPermissionCheckHandler((_wc, permission) => permission === 'local-fonts');
+    // The font index is cached between runs so only the first scan pays
+    // for parsing every installed font file.
+    systemFonts.setCacheDirectory(app.getPath('userData'));
+
+    // Every web permission is denied outright - camera, mic, geolocation,
+    // notifications, and 'local-fonts' too: installed fonts now come from
+    // systemFonts.js reading the OS font directories in this process, so
+    // the renderer never needs to ask Chromium for them.
+    session.defaultSession.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
+    session.defaultSession.setPermissionCheckHandler(() => false);
 
     createWindow();
   });
@@ -257,6 +259,62 @@ ipcMain.handle('app:getVersion', () => app.getVersion());
 ipcMain.handle('clipboard:writeText', (_evt, text) => {
   clipboard.writeText(String(text ?? ''));
   return true;
+});
+
+/**
+ * Every font installed on this machine, read straight off disk. This
+ * replaces the renderer's old `queryLocalFonts()` call, which needed a
+ * permission grant, only worked from a user gesture, and returned nothing
+ * at all on plenty of systems.
+ */
+ipcMain.handle('fonts:listSystem', async (_evt, opts) => {
+  try {
+    const result = await systemFonts.listSystemFonts({ force: !!(opts && opts.force) });
+    return { ok: true, ...result };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
+ipcMain.handle('fonts:loadFace', async (_evt, { path: fontPath, postscriptName }) => {
+  try {
+    const face = await systemFonts.loadFontFace(fontPath, postscriptName);
+    return { ok: true, ...face };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
+/**
+ * Downloads a font this machine doesn't have and hands it to the OS
+ * installer - on Windows that opens Font Viewer, whose Install button puts
+ * it in the per-user font directory. Installing system-wide needs elevation
+ * we deliberately don't ask for, so the last click stays with the user.
+ */
+ipcMain.handle('fonts:downloadForInstall', async (_evt, { family, bold, italic }) => {
+  try {
+    const data = await fetchGoogleFont(family, { bold, italic });
+    const safe = String(family).replace(/[^A-Za-z0-9 _-]/g, '').trim() || 'font';
+    const suffix = `${bold ? '-Bold' : ''}${italic ? '-Italic' : ''}`;
+    const target = path.join(app.getPath('downloads'), `${safe}${suffix}.ttf`);
+    await fs.writeFile(target, Buffer.from(data));
+    const openError = await shell.openPath(target);
+    return { ok: true, path: target, opened: !openError, openError: openError || null };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
+/**
+ * Opens the font's page in the user's browser. The URL is built here from
+ * a family name rather than accepted from the renderer, so this can't be
+ * turned into a general "open any link" capability.
+ */
+ipcMain.handle('fonts:openSpecimen', async (_evt, family) => {
+  const clean = String(family || '').replace(/[^A-Za-z0-9 _-]/g, '').trim();
+  if (!clean) return { ok: false, error: 'No font name given.' };
+  await shell.openExternal(`https://fonts.google.com/?query=${encodeURIComponent(clean)}`);
+  return { ok: true };
 });
 
 ipcMain.handle('fonts:fetchGoogleFont', async (_evt, { family, bold, italic }) => {
