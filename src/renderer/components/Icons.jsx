@@ -138,8 +138,6 @@ export const IconLayers = ({ size = 17 }) =>
       <path d="M3 11l7 4 7-4" />
     </>
   ,1.5);
-export const IconComments = ({ size = 17 }) =>
-  base(size, <path d="M3 5.5a2 2 0 012-2h10a2 2 0 012 2v6a2 2 0 01-2 2H8l-4 3.5V13.5H5a2 2 0 01-2-2z" />, 1.5);
 export const IconSinglePage = ({ size = 15 }) => base(size, <rect x="5" y="3" width="10" height="14" rx="1.5" />, 1.5);
 export const IconContinuous = ({ size = 15 }) =>
   base(

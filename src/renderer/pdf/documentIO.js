@@ -1,9 +1,10 @@
 import { PDFDocument, StandardFonts, rgb, degrees } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
 import pdfjsLib from './pdfjsSetup';
-import { resolveStandardFont, isCustomFont } from './fonts';
+import { resolveStandardFont } from './fonts';
 import { storageRectToPdfLib } from './coords';
 import { arrowGeometry, insetForStroke, DEFAULT_FILL_OPACITY } from './shapeGeometry';
+import { canEditTextInPlace, hideTextOps } from './contentStreamText';
 
 // ---------------------------------------------------------------------------
 // Opening
@@ -127,14 +128,21 @@ export async function detectFormFields(originalBytes) {
   }
 }
 
-function applyFormValues(pdfDoc, formValues) {
+/**
+ * @param ctx the bake context, used to sanitize values against the font
+ *   form fields draw with (see sanitizeTextForFont) - a single character
+ *   Helvetica can't encode otherwise fails the whole save when pdf-lib
+ *   generates the field's appearance stream.
+ */
+async function applyFormValues(pdfDoc, formValues, ctx) {
   if (!formValues || formValues.length === 0) return;
   const form = pdfDoc.getForm();
+  const fieldFont = await formFieldFont(ctx, pdfDoc);
   for (const fv of formValues) {
     try {
       const field = form.getField(fv.name);
       const type = field.constructor.name;
-      if (type === 'PDFTextField') field.setText(fv.value || '');
+      if (type === 'PDFTextField') field.setText(sanitizeTextForFont(fieldFont, fv.value || '', (chars) => ctx?.onUnencodable?.({ name: fv.name, type: 'formfield' }, chars)));
       else if (type === 'PDFCheckBox') (fv.value ? field.check() : field.uncheck());
       else if (type === 'PDFRadioGroup') field.select(fv.value);
       else if (type === 'PDFDropdown') field.select(fv.value);
@@ -153,6 +161,85 @@ function hexToRgb(hex) {
   const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})/i.exec(hex || '#000000');
   if (!m) return rgb(0, 0, 0);
   return rgb(parseInt(m[1], 16) / 255, parseInt(m[2], 16) / 255, parseInt(m[3], 16) / 255);
+}
+
+/**
+ * Characters outside a standard-14 font's WinAnsi encoding, mapped to the
+ * closest thing it *can* draw. The 14 base fonts have no glyphs for these
+ * at all, and pdf-lib refuses to guess - it throws `WinAnsi cannot encode
+ * "→" (0x2192)`, which used to abort the entire save over a single
+ * character. Substituting keeps the document saveable; the user is told
+ * what changed (see sanitizeTextForFont's onReplace) so it's never a
+ * silent corruption.
+ *
+ * The fix for the underlying limitation is to pick a real font - any
+ * system or Google font is embedded as a full Unicode subset and hits none
+ * of this.
+ */
+const WINANSI_SUBSTITUTES = {
+  '→': '->', '←': '<-', '↔': '<->', '⇒': '=>', '⇐': '<=',
+  '≤': '<=', '≥': '>=', '≠': '!=', '≈': '~', '±': '+/-',
+  '×': 'x', '÷': '/', '−': '-', '∙': '.', '⋅': '.',
+  '"': '"', '"': '"', "'": "'", "'": "'",
+  '⁄': '/', '№': 'No.', '℃': 'C', '℉': 'F',
+  '☑': '[x]', '☐': '[ ]', '✓': 'v', '✔': 'v', '✗': 'x', '✘': 'x',
+  '▪': '-', '▶': '>', '◀': '<', '★': '*', '☆': '*'
+};
+
+// Per-font memo of which characters that font can actually encode, since
+// the check is a try/catch around pdf-lib's encoder.
+const encodableCache = new WeakMap();
+
+function canEncode(font, ch) {
+  let memo = encodableCache.get(font);
+  if (!memo) {
+    memo = new Map();
+    encodableCache.set(font, memo);
+  }
+  if (memo.has(ch)) return memo.get(ch);
+  let ok;
+  try {
+    font.widthOfTextAtSize(ch, 12);
+    ok = true;
+  } catch {
+    ok = false;
+  }
+  memo.set(ch, ok);
+  return ok;
+}
+
+/**
+ * Text the given font is guaranteed to be able to draw.
+ * @param {(originals: string[]) => void} onReplace called with the
+ *   characters that had to be substituted, if any.
+ */
+function sanitizeTextForFont(font, text, onReplace) {
+  const str = String(text ?? '');
+  if (!str) return str;
+  // Fast path: embedded fonts cover full Unicode, and most text is plain
+  // ASCII, so this succeeds without any per-character work.
+  try {
+    font.widthOfTextAtSize(str, 12);
+    return str;
+  } catch {
+    /* fall through and repair character by character */
+  }
+
+  const replaced = [];
+  let out = '';
+  for (const ch of str) {
+    if (ch === '\n' || canEncode(font, ch)) {
+      out += ch;
+      continue;
+    }
+    const substitute = WINANSI_SUBSTITUTES[ch] ?? '?';
+    // A substitute made of characters the font also can't draw would just
+    // fail again, so verify it before using it.
+    out += [...substitute].every((c) => canEncode(font, c)) ? substitute : '?';
+    replaced.push(ch);
+  }
+  if (replaced.length && onReplace) onReplace(replaced);
+  return out;
 }
 
 function wrapText(font, text, fontSize, maxWidth) {
@@ -220,6 +307,16 @@ async function embedImageForDataUrl(outDoc, cache, dataUrl) {
   return embedded;
 }
 
+/** Helvetica, which is what pdf-lib draws AcroForm field values with -
+ * needed only to test what those values can encode. */
+async function formFieldFont(ctx, pdfDoc) {
+  const cache = ctx?.standardFontCache;
+  if (cache?.has('__formfield')) return cache.get('__formfield');
+  const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  cache?.set('__formfield', font);
+  return font;
+}
+
 async function getFontFor(ctx, ann) {
   const { outDoc, standardFontCache, customFonts, customFontCache } = ctx;
   if (ann.fontId && customFonts && customFonts.has(ann.fontId)) {
@@ -260,17 +357,20 @@ async function drawAnnotation(ctx, page, ann, pageHeight) {
     case 'text': {
       const font = await getFontFor(ctx, ann);
       const box = storageRectToPdfLib({ x: ann.x, y: ann.y, w: ann.w, h: ann.h }, pageHeight);
-      // Editing existing PDF text works by covering the original run (its
-      // real glyphs still live in the content stream - there's no portable
-      // way to rewrite that in place) with the sampled background color,
-      // then drawing the edited text on top in the same spot.
-      if (ann.coverRect) {
+      // The original glyphs were normally already made invisible directly
+      // in the content stream (see hideReplacedTextRuns), so nothing needs
+      // covering. The rectangle is only painted when that wasn't possible
+      // for this run - text inside a Form XObject, a clipping text mode, a
+      // page whose operators no longer line up - where hiding the old text
+      // under its sampled background color remains the only option.
+      if (ann.coverRect && !ctx.inPlaceEdited?.has(ann.id)) {
         const coverBox = storageRectToPdfLib(ann.coverRect, pageHeight);
         page.drawRectangle({ x: coverBox.x, y: coverBox.y, width: coverBox.w, height: coverBox.h, color: hexToRgb(ann.coverColor || '#ffffff') });
       }
       const size = ann.fontSize || 14;
       const lineHeight = size * 1.25;
-      const lines = wrapText(font, ann.text || '', size, box.w);
+      const text = sanitizeTextForFont(font, ann.text || '', (chars) => ctx.onUnencodable?.(ann, chars));
+      const lines = wrapText(font, text, size, box.w);
       let cursorY = box.y + box.h - size;
       for (const line of lines) {
         if (cursorY < box.y - lineHeight) break;
@@ -383,6 +483,10 @@ async function drawAnnotation(ctx, page, ann, pageHeight) {
       const name = resolveUniqueFieldName(form, ann.name || 'Field');
       const box = storageRectToPdfLib({ x: ann.x, y: ann.y, w: ann.w, h: ann.h }, pageHeight);
       const widgetOpts = { x: box.x, y: box.y, width: box.w, height: box.h };
+      // Field values and option labels are drawn by pdf-lib in Helvetica,
+      // so anything it can't encode has to be substituted here too.
+      const fieldFont = await formFieldFont(ctx, outDoc);
+      const clean = (v) => sanitizeTextForFont(fieldFont, String(v ?? ''), (chars) => ctx.onUnencodable?.(ann, chars));
       let field;
 
       if (ann.fieldType === 'checkbox') {
@@ -391,14 +495,15 @@ async function drawAnnotation(ctx, page, ann, pageHeight) {
         if (ann.value) field.check();
       } else if (ann.fieldType === 'dropdown') {
         field = form.createDropdown(name);
-        const options = (ann.options || []).filter(Boolean);
+        const options = (ann.options || []).filter(Boolean).map(clean);
         if (options.length) field.setOptions(options);
         field.addToPage(page, widgetOpts);
-        if (ann.value && options.includes(ann.value)) field.select(ann.value);
+        const selected = clean(ann.value);
+        if (ann.value && options.includes(selected)) field.select(selected);
       } else {
         field = form.createTextField(name);
         field.addToPage(page, widgetOpts);
-        if (ann.value) field.setText(String(ann.value));
+        if (ann.value) field.setText(clean(ann.value));
       }
       if (ann.required) field.enableRequired();
       break;
@@ -440,6 +545,46 @@ function isPristineStructure(pages, originalPageCount) {
 }
 
 /**
+ * Makes the original glyphs behind each edited text run invisible in the
+ * page's own content stream, so the replacement text lands on genuinely
+ * empty space instead of on a rectangle painted in a guessed background
+ * color (which is what made edits look pasted-on over anything that wasn't
+ * a flat background).
+ *
+ * Must run before anything is drawn onto the page: it replaces /Contents
+ * wholesale, which would discard drawing pdf-lib had already appended.
+ *
+ * @returns {Set<string>} ids of the annotations whose original text was
+ *   fully hidden - only those may skip their cover rectangle. Anything not
+ *   in this set falls back to covering, so a partial or refused edit can
+ *   never leave the old text showing through the new.
+ */
+function hideReplacedTextRuns(page, anns) {
+  const handled = new Set();
+  const edits = anns.filter(
+    (a) => a.type === 'text' && Array.isArray(a.sourceOpIndices) && a.sourceOpIndices.length > 0
+  );
+  if (edits.length === 0) return handled;
+
+  // Every edit on a page came from the same extraction pass, so they must
+  // all report the same total; that count is what proves the
+  // run-to-operator mapping still describes this page (see
+  // contentStreamText). Disagreement means at least one annotation is
+  // stale, and there's no way to tell which - so cover them all instead of
+  // risking hiding the wrong glyphs.
+  const expected = edits[0].sourceTextOpCount;
+  if (typeof expected !== 'number') return handled;
+  if (!edits.every((a) => a.sourceTextOpCount === expected)) return handled;
+  if (!canEditTextInPlace(page, expected)) return handled;
+
+  const hidden = hideTextOps(page, edits.flatMap((a) => a.sourceOpIndices));
+  for (const ann of edits) {
+    if (ann.sourceOpIndices.every((i) => hidden.has(i))) handled.add(ann.id);
+  }
+  return handled;
+}
+
+/**
  * Turn the current editor state (page plan + annotation overlays) into
  * final PDF bytes.
  *
@@ -454,8 +599,21 @@ function isPristineStructure(pages, originalPageCount) {
  *    at all - only a flattened raster of it - so the redacted content
  *    never enters the saved file.
  */
-export async function bakeDocument({ docState, resources, formValues }) {
+export async function bakeDocument({ docState, resources, formValues, onWarning }) {
   const { originalBytes, pdfjsDoc, externalSources, customFonts } = resources;
+
+  // Characters no standard-14 font can draw are substituted rather than
+  // failing the save (see sanitizeTextForFont) - collected here so the
+  // caller can tell the user exactly what changed.
+  const substituted = new Set();
+  const onUnencodable = (_ann, chars) => chars.forEach((c) => substituted.add(c));
+  const reportWarnings = () => {
+    if (substituted.size === 0 || !onWarning) return;
+    onWarning(
+      `Some characters (${[...substituted].join(' ')}) aren't available in the built-in fonts and were replaced. ` +
+        'Choose a system or Google font for that text to keep them.'
+    );
+  };
   const anyRedaction = docState.pages.some((p) =>
     (docState.annotations[p.key] || []).some((a) => a.type === 'redact')
   );
@@ -477,27 +635,32 @@ export async function bakeDocument({ docState, resources, formValues }) {
   if (pristine) {
     const outDoc = await PDFDocument.load(originalBytes);
     outDoc.registerFontkit(fontkit);
-    const ctx = { outDoc, imageCache, standardFontCache, customFonts, customFontCache };
+    const ctx = { outDoc, imageCache, standardFontCache, customFonts, customFontCache, onUnencodable };
     const pdfPages = outDoc.getPages();
     for (let i = 0; i < docState.pages.length; i++) {
       const entry = docState.pages[i];
       const page = pdfPages[i];
       page.setRotation(degrees(((entry.rotation % 360) + 360) % 360));
       const anns = docState.annotations[entry.key] || [];
+      // Before any drawing: replacing /Contents would throw away anything
+      // pdf-lib had already appended to this page.
+      ctx.inPlaceEdited = hideReplacedTextRuns(page, anns);
       for (const ann of anns) {
         await drawAnnotation(ctx, page, ann, entry.height);
       }
     }
-    applyFormValues(outDoc, formValues);
+    await applyFormValues(outDoc, formValues, ctx);
     outDoc.setProducer('Paperlight');
     outDoc.setModificationDate(new Date());
-    return outDoc.save();
+    const bytes = await outDoc.save();
+    reportWarnings();
+    return bytes;
   }
 
   // Rebuild path
   const outDoc = await PDFDocument.create();
   outDoc.registerFontkit(fontkit);
-  const ctx = { outDoc, imageCache, standardFontCache, customFonts, customFontCache };
+  const ctx = { outDoc, imageCache, standardFontCache, customFonts, customFontCache, onUnencodable };
   const selfDoc = await PDFDocument.load(originalBytes, { ignoreEncryption: true });
 
   for (const entry of docState.pages) {
@@ -526,16 +689,23 @@ export async function bakeDocument({ docState, resources, formValues }) {
 
     page.setRotation(degrees(((entry.rotation % 360) + 360) % 360));
 
+    // A redacted page is a flat raster with no text operators left to
+    // hide, and a blank one never had any.
+    ctx.inPlaceEdited =
+      redactRects.length > 0 || entry.source === 'blank' ? new Set() : hideReplacedTextRuns(page, anns);
+
     for (const ann of anns) {
       if (ann.type === 'redact') continue;
       await drawAnnotation(ctx, page, ann, entry.height);
     }
   }
 
-  applyFormValues(outDoc, formValues);
+  await applyFormValues(outDoc, formValues, ctx);
   outDoc.setProducer('Paperlight');
   outDoc.setModificationDate(new Date());
-  return outDoc.save();
+  const bytes = await outDoc.save();
+  reportWarnings();
+  return bytes;
 }
 
 // ---------------------------------------------------------------------------

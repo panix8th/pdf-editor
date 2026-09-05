@@ -17,13 +17,19 @@ import { findAndLoadSystemFont } from '../pdf/systemFontMatch';
 import { getCachedResolvedFontId, cacheResolvedFontId } from '../state/docResources';
 import { arrowGeometry, pointsAttr, DEFAULT_FILL_OPACITY } from '../pdf/shapeGeometry';
 import { FIELD_TYPE_LABELS, nextFieldName } from '../pdf/formFields';
+import {
+  textPositionAt,
+  runAtPoint,
+  selectionRects,
+  selectedText,
+  selectedRuns,
+  isEmptySelection,
+  wordRangeAt,
+  lineRangeAt
+} from '../pdf/textSelection';
 
 const BOX_TOOLS = new Set(['rect', 'ellipse', 'highlight', 'redact', 'formfield']);
 const LINE_TOOLS = new Set(['line', 'arrow']);
-
-function rectsIntersect(a, b) {
-  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
-}
 
 function rgbToHex(r, g, b) {
   return '#' + [r, g, b].map((v) => Math.max(0, Math.min(255, v)).toString(16).padStart(2, '0')).join('');
@@ -63,7 +69,6 @@ export default function AnnotationLayer({ doc, page, pageIndex, pdfPage, scale, 
   const overlayRef = useRef(null);
   const addAnnotation = useStore((s) => s.addAnnotation);
   const updateAnnotation = useStore((s) => s.updateAnnotation);
-  const deleteAnnotation = useStore((s) => s.deleteAnnotation);
   const selectObject = useStore((s) => s.selectObject);
   const setTool = useStore((s) => s.setTool);
   const showToast = useStore((s) => s.showToast);
@@ -73,15 +78,13 @@ export default function AnnotationLayer({ doc, page, pageIndex, pdfPage, scale, 
   const tool = doc.tool;
   const toolOptions = doc.toolOptions;
   const [draft, setDraft] = useState(null);
-  const [marquee, setMarquee] = useState(null);
   const [editingId, setEditingId] = useState(null);
   const [textRuns, setTextRuns] = useState([]);
-  // A completed marquee drag can release the mouse directly on top of a
-  // text run's hit-target, which fires that element's own `click` (the
-  // browser targets `click` at whatever's under the pointer at mouseup,
-  // regardless of where the drag started) - without this guard that would
-  // create a second, single-run annotation on top of the merged one.
-  const suppressNextRunClick = useRef(false);
+  const [textOpCount, setTextOpCount] = useState(0);
+  // Character-level text selection as {anchor, focus} positions in run
+  // order, or null. Deliberately separate from object selection.
+  const [textSelection, setTextSelection] = useState(null);
+  const [hoveringText, setHoveringText] = useState(false);
 
   const liveViewport = useMemo(() => pdfPage.getViewport({ scale, rotation }), [pdfPage, scale, rotation]);
 
@@ -92,15 +95,20 @@ export default function AnnotationLayer({ doc, page, pageIndex, pdfPage, scale, 
     return { x: e.clientX - rect.left, y: e.clientY - rect.top };
   };
 
-  // Lets the "select" tool double as an "edit existing text" tool: extract
-  // every text run on this page once so we can offer them as click targets.
+  // Lets the "select" tool double as a text layer: extract every run on
+  // this page once so text can be selected, copied and edited in place.
   useEffect(() => {
     if (pdfPage.isFake) {
       setTextRuns([]);
+      setTextOpCount(0);
       return;
     }
     let cancelled = false;
-    extractTextRuns(pdfPage).then((runs) => !cancelled && setTextRuns(runs));
+    extractTextRuns(pdfPage).then(({ runs, textOpCount: count }) => {
+      if (cancelled) return;
+      setTextRuns(runs);
+      setTextOpCount(count);
+    });
     return () => {
       cancelled = true;
     };
@@ -126,11 +134,10 @@ export default function AnnotationLayer({ doc, page, pageIndex, pdfPage, scale, 
     return text;
   };
 
-  // Creates one editable text annotation covering one or more original PDF
-  // text runs (merged when more than one - see the marquee-select flow
-  // below), auto-detecting font/color/size from the first run and
-  // upgrading to the real font in the background exactly like a
-  // single-run click.
+  // Creates one editable text annotation covering the runs a text
+  // selection touched (merged into a single box when there's more than
+  // one), auto-detecting font/color/size from the first run and upgrading
+  // to the real font in the background.
   const createEditableAnnotationFromRuns = (runs) => {
     const first = runs[0];
     const minX = Math.min(...runs.map((r) => r.rect.x));
@@ -160,9 +167,16 @@ export default function AnnotationLayer({ doc, page, pageIndex, pdfPage, scale, 
       bold: first.bold,
       italic: first.italic,
       align: 'left',
+      // The save path makes exactly these operators' glyphs invisible in
+      // the content stream, so the replacement lands on empty space.
+      // coverRect/coverColor stay as the fallback for pages where that
+      // isn't possible (see hideReplacedTextRuns in documentIO).
+      sourceOpIndices: runs.every((r) => typeof r.opIndex === 'number') ? runs.map((r) => r.opIndex) : null,
+      sourceTextOpCount: textOpCount,
       coverRect: box,
       coverColor: bgColor
     });
+    setTextSelection(null);
     setEditingId(id);
 
     // Try to upgrade from the instant offline guess to the real font, best
@@ -198,15 +212,87 @@ export default function AnnotationLayer({ doc, page, pageIndex, pdfPage, scale, 
     })();
   };
 
-  const onTextRunClick = (run) => (e) => {
-    e.stopPropagation();
-    if (tool !== 'select') return;
-    if (suppressNextRunClick.current) {
-      suppressNextRunClick.current = false;
+  /** Turns the current text selection into an editable box, replacing the
+   * whole runs it touches (the save path hides whole content-stream
+   * operators, so partial-run edits aren't a thing). */
+  const editSelection = () => {
+    const runs = selectedRuns(textRuns, textSelection);
+    if (runs.length > 0) createEditableAnnotationFromRuns(runs);
+    // createEditableAnnotationFromRuns clears the selection itself.
+  };
+
+  const copySelection = () => {
+    const text = selectedText(textRuns, textSelection);
+    if (!text) return;
+    // Electron's clipboard first: navigator.clipboard is permission-gated
+    // and rejects silently when the document isn't focused. The web API is
+    // only the fallback for running the renderer in a plain browser.
+    if (window.pdfEditor?.writeClipboardText) {
+      window.pdfEditor.writeClipboardText(text).catch(() => {});
+    } else {
+      navigator.clipboard?.writeText(text).catch(() => {});
+    }
+    showToast('success', `Copied ${text.length} character${text.length === 1 ? '' : 's'}`);
+  };
+
+  // Both actions close over things that change independently of the
+  // selection (the live viewport, the annotation store), so the keyboard
+  // handler reads them through a ref that's refreshed every render rather
+  // than capturing whichever copies existed when it was bound.
+  const selectionActions = useRef({ editSelection, copySelection });
+  useEffect(() => {
+    selectionActions.current = { editSelection, copySelection };
+  });
+
+  // Picking up a drawing tool means the user is done with the text they
+  // had selected; leaving the highlight up would just be stale decoration
+  // that reappears the moment they switch back to Select.
+  useEffect(() => {
+    if (tool !== 'select') setTextSelection(null);
+  }, [tool]);
+
+  // Ctrl+C / Enter / Escape while text is selected. Bound on the window
+  // because the page overlay isn't focusable - but every branch bails out
+  // when the user is typing into a field somewhere else in the app.
+  useEffect(() => {
+    if (tool !== 'select' || isEmptySelection(textSelection)) return;
+    const onKey = (e) => {
+      const active = document.activeElement;
+      if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable)) return;
+      if (e.key === 'Escape') {
+        setTextSelection(null);
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        selectionActions.current.editSelection();
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c') {
+        e.preventDefault();
+        selectionActions.current.copySelection();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [tool, textSelection]);
+
+  const onOverlayMouseMove = (e) => {
+    if (tool !== 'select') {
+      if (hoveringText) setHoveringText(false);
       return;
     }
-    createEditableAnnotationFromRuns([run]);
+    const { x, y } = getOffset(e);
+    const [sx, sy] = screenPointToStorage(pdfPage, liveViewport, x, y);
+    const over = runAtPoint(textRuns, sx, sy) >= 0;
+    if (over !== hoveringText) setHoveringText(over);
   };
+
+  // Floating actions sit just under the end of the selection.
+  const selectionToolbar = useMemo(() => {
+    if (isEmptySelection(textSelection)) return null;
+    const rects = selectionRects(textRuns, textSelection);
+    if (rects.length === 0) return null;
+    const last = rects[rects.length - 1];
+    const screen = storageRectToScreen(pdfPage, liveViewport, last);
+    return { x: screen.x, y: screen.y + screen.h + 6 };
+  }, [textRuns, textSelection, pdfPage, liveViewport]);
 
   const commitNewShape = useCallback(
     (type, screenRect, extra) => {
@@ -220,42 +306,53 @@ export default function AnnotationLayer({ doc, page, pageIndex, pdfPage, scale, 
 
   const onOverlayMouseDown = (e) => {
     if (tool === 'select') {
-      // Only the select tool cares about "did this click land on an empty
+      // Only the select tool cares about "did this press land on an empty
       // part of the page" - existing objects handle their own clicks and
       // stop this from firing for them.
       if (e.target !== overlayRef.current) return;
+
+      // Dragging over the page selects text, exactly like any PDF viewer:
+      // press, drag to extend, release. Whole-object selection is handled
+      // by the objects themselves, so this layer is purely about text.
       const { x: startX, y: startY } = getOffset(e);
-      let dragged = false;
-      setMarquee({ startX, startY, x: startX, y: startY });
+      const [sx, sy] = screenPointToStorage(pdfPage, liveViewport, startX, startY);
+      const anchor = textPositionAt(textRuns, sx, sy);
+      selectObject(doc.id, page.key, null);
+
+      if (!anchor) {
+        setTextSelection(null);
+        return;
+      }
+
+      // Double-click selects the word, triple-click the whole line - the
+      // same escalation every text view uses, and the fastest way to grab
+      // a line for editing.
+      if (e.detail >= 3) {
+        const line = lineRangeAt(textRuns, anchor.runIdx);
+        setTextSelection({
+          anchor: { runIdx: line.from, charIdx: 0 },
+          focus: { runIdx: line.to, charIdx: textRuns[line.to].str.length }
+        });
+        return;
+      }
+      if (e.detail === 2) {
+        const run = textRuns[anchor.runIdx];
+        const { from, to } = wordRangeAt(run, anchor.charIdx);
+        setTextSelection({ anchor: { runIdx: anchor.runIdx, charIdx: from }, focus: { runIdx: anchor.runIdx, charIdx: to } });
+        return;
+      }
+
+      setTextSelection({ anchor, focus: anchor });
 
       const onMove = (ev) => {
         const { x, y } = getOffset(ev);
-        if (Math.abs(x - startX) > 3 || Math.abs(y - startY) > 3) dragged = true;
-        setMarquee({ startX, startY, x, y });
+        const [mx, my] = screenPointToStorage(pdfPage, liveViewport, x, y);
+        const focus = textPositionAt(textRuns, mx, my);
+        if (focus) setTextSelection((sel) => (sel ? { anchor: sel.anchor, focus } : sel));
       };
-      const onUp = (ev) => {
+      const onUp = () => {
         window.removeEventListener('mousemove', onMove);
         window.removeEventListener('mouseup', onUp);
-        setMarquee(null);
-        const { x: endX, y: endY } = getOffset(ev);
-
-        if (!dragged) {
-          // A plain click on empty space: just deselect.
-          selectObject(doc.id, page.key, null);
-          return;
-        }
-
-        // The mouse released mid-drag may land on a text run's own
-        // hit-target, which would otherwise fire its `click` handler too.
-        suppressNextRunClick.current = true;
-
-        const screenSel = { x: Math.min(startX, endX), y: Math.min(startY, endY), w: Math.abs(endX - startX), h: Math.abs(endY - startY) };
-        const storageSel = screenRectToStorage(pdfPage, liveViewport, screenSel);
-        // .filter() preserves textRuns' original stream order regardless of
-        // drag direction, so multi-line merges always read correctly.
-        const hit = textRuns.filter((run) => rectsIntersect(run.rect, storageSel));
-        if (hit.length === 0) return;
-        createEditableAnnotationFromRuns(hit);
       };
       window.addEventListener('mousemove', onMove);
       window.addEventListener('mouseup', onUp);
@@ -376,23 +473,34 @@ export default function AnnotationLayer({ doc, page, pageIndex, pdfPage, scale, 
     <div
       ref={overlayRef}
       className="page-overlay"
-      style={{ cursor: tool === 'select' ? 'default' : 'crosshair' }}
+      style={{ cursor: tool === 'select' ? (hoveringText ? 'text' : 'default') : 'crosshair' }}
       onMouseDown={onOverlayMouseDown}
+      onMouseMove={onOverlayMouseMove}
     >
       {tool === 'select' &&
-        textRuns.map((run) => {
-          const r = storageRectToScreen(pdfPage, liveViewport, run.rect);
+        selectionRects(textRuns, textSelection).map((rect, i) => {
+          const r = storageRectToScreen(pdfPage, liveViewport, rect);
           return (
             <div
-              key={run.id}
-              className="text-hit-target"
-              title="Click to edit this text"
-              style={{ position: 'absolute', left: r.x, top: r.y, width: r.w, height: r.h }}
-              onMouseDown={(e) => e.stopPropagation()}
-              onClick={onTextRunClick(run)}
+              key={i}
+              className="text-selection"
+              style={{ left: r.x, top: r.y, width: r.w, height: r.h }}
             />
           );
         })}
+
+      {/* Anchored to the end of the selection so it never covers the text
+          being read, and only once something is actually selected. */}
+      {tool === 'select' && selectionToolbar && (
+        <div className="text-selection-toolbar" style={{ left: selectionToolbar.x, top: selectionToolbar.y }}>
+          <button onMouseDown={(e) => e.stopPropagation()} onClick={editSelection} title="Replace this text (Enter)">
+            Edit text
+          </button>
+          <button onMouseDown={(e) => e.stopPropagation()} onClick={copySelection} title="Copy (Ctrl+C)">
+            Copy
+          </button>
+        </div>
+      )}
 
       {/* Rendered in annotation-array order so DOM (paint) order always
           matches the layer order the user sees/edits in the Layers panel,
@@ -481,34 +589,24 @@ export default function AnnotationLayer({ doc, page, pageIndex, pdfPage, scale, 
         />
       )}
 
-      {marquee && (
-        <div
-          style={{
-            position: 'absolute',
-            left: Math.min(marquee.startX, marquee.x),
-            top: Math.min(marquee.startY, marquee.y),
-            width: Math.abs(marquee.x - marquee.startX),
-            height: Math.abs(marquee.y - marquee.startY),
-            background: 'rgba(79,140,255,0.12)',
-            border: '1px solid var(--accent)',
-            pointerEvents: 'none'
-          }}
-        />
-      )}
-
+      {/* A match can straddle a line break, so it carries one rect per
+          text run it covers - highlight each rather than one box spanning
+          the gap between them. */}
       {(doc.search.matches || [])
         .map((m, i) => ({ ...m, i }))
         .filter((m) => m.pageNumber === pageIndex + 1)
-        .map((m) => {
-          const screenRect = storageRectToScreen(pdfPage, liveViewport, m.rect);
-          return (
-            <div
-              key={m.i}
-              className={`search-highlight ${m.i === doc.search.activeIndex ? 'active' : ''}`}
-              style={{ left: screenRect.x, top: screenRect.y, width: screenRect.w, height: screenRect.h, pointerEvents: 'none' }}
-            />
-          );
-        })}
+        .flatMap((m) =>
+          (m.rects || [m.rect]).map((rect, j) => {
+            const screenRect = storageRectToScreen(pdfPage, liveViewport, rect);
+            return (
+              <div
+                key={`${m.i}-${j}`}
+                className={`search-highlight ${m.i === doc.search.activeIndex ? 'active' : ''}`}
+                style={{ left: screenRect.x, top: screenRect.y, width: screenRect.w, height: screenRect.h, pointerEvents: 'none' }}
+              />
+            );
+          })
+        )}
     </div>
   );
 }

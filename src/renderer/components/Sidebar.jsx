@@ -227,6 +227,10 @@ function PageThumb({ doc, page }) {
   useEffect(() => {
     if (!visible || page.source !== 'self') return;
     let cancelled = false;
+    // Held so the cleanup can genuinely cancel an in-flight render:
+    // rotating a page restarts this effect, and pdf.js refuses two
+    // concurrent renders on one canvas.
+    let task = null;
     (async () => {
       const resources = getResource(doc.id);
       const pdfjsDoc = resources?.pdfjsDoc;
@@ -234,18 +238,24 @@ function PageThumb({ doc, page }) {
       const pdfPage = await pdfjsDoc.getPage(page.sourceIndex + 1);
       if (cancelled) return;
       const targetW = 190;
+      const dpr = Math.min(window.devicePixelRatio || 1, 3);
       const baseViewport = pdfPage.getViewport({ scale: 1, rotation: page.rotation });
-      const scale = targetW / baseViewport.width;
-      const viewport = pdfPage.getViewport({ scale, rotation: page.rotation });
+      const viewport = pdfPage.getViewport({ scale: (targetW / baseViewport.width) * dpr, rotation: page.rotation });
       const canvas = canvasRef.current;
       if (!canvas) return;
-      canvas.width = viewport.width;
-      canvas.height = viewport.height;
-      const ctx = canvas.getContext('2d');
-      await pdfPage.render({ canvasContext: ctx, viewport }).promise;
+      // The backing store is DPR-scaled; `.thumb canvas` is laid out with
+      // width:100%/height:auto, so the extra pixels turn into sharpness
+      // rather than a bigger thumbnail.
+      canvas.width = Math.ceil(viewport.width);
+      canvas.height = Math.ceil(viewport.height);
+      task = pdfPage.render({ canvasContext: canvas.getContext('2d'), viewport });
+      await task.promise.catch(() => {
+        /* cancelled by a newer render */
+      });
     })();
     return () => {
       cancelled = true;
+      task?.cancel();
     };
   }, [visible, doc.id, page.sourceIndex, page.rotation, page.source]);
 

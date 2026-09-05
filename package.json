@@ -1,7 +1,7 @@
 {
   "name": "paperlight",
   "productName": "Paperlight",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Paperlight - a lightweight, offline desktop PDF editor: view, edit, annotate, sign and save PDFs.",
   "main": "src/main/main.js",
   "author": "Paperlight",
@@ -18,7 +18,12 @@
     "pack": "npm run build && electron-builder --dir",
     "dist": "npm run build && electron-builder --win nsis portable",
     "dist:installer": "npm run build && electron-builder --win nsis",
-    "dist:portable": "npm run build && electron-builder --win portable"
+    "dist:portable": "npm run build && electron-builder --win portable",
+    "test": "npm run test:surgery && npm run test:search && npm run test:encryption && npm run test:smoke",
+    "test:surgery": "node scripts/text-surgery-test.mjs",
+    "test:search": "node scripts/text-search-test.mjs",
+    "test:encryption": "node scripts/verify-encryption.mjs",
+    "test:smoke": "node scripts/smoke-test.mjs"
   },
   "dependencies": {
     "@pdf-lib/fontkit": "^1.1.1",

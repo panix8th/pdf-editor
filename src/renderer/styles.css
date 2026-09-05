@@ -820,12 +820,51 @@ button {
   position: absolute;
   inset: 0;
 }
-.text-hit-target {
-  cursor: text;
+/* Text selection over the page: a translucent tint painted on top of the
+   already-rendered canvas, so the glyphs stay legible through it (the way
+   a browser's own selection reads). */
+.text-selection {
+  position: absolute;
+  pointer-events: none;
+  border-radius: 2px;
+  background: var(--accent);
+  opacity: 0.28;
+  mix-blend-mode: multiply;
 }
-.text-hit-target:hover {
-  outline: 1px dashed var(--accent);
+/* The theme is stamped on <body> (see App.jsx), the same hook the token
+   blocks at the top of this file use. The page itself is light in both
+   themes so multiply is right either way, but the dark theme's accent is
+   a paler lilac and needs to bite a little harder to read as a selection. */
+[data-theme='dark'] .text-selection {
+  opacity: 0.34;
+}
+
+.text-selection-toolbar {
+  position: absolute;
+  z-index: 20;
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 9px;
+  background: var(--elev);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  white-space: nowrap;
+}
+.text-selection-toolbar button {
+  padding: 5px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 550;
+  cursor: pointer;
+}
+.text-selection-toolbar button:hover {
   background: var(--accent-soft);
+  color: var(--accent);
 }
 .page-label {
   text-align: center;
@@ -1066,6 +1105,10 @@ textarea.field {
 .thumb img,
 .thumb canvas {
   width: 100%;
+  /* The canvas backing store is rendered at device pixel ratio, so its
+     attribute height is larger than the laid-out height - height:auto
+     keeps the aspect ratio instead of stretching it. */
+  height: auto;
   display: block;
   background: #fff;
 }

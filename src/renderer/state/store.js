@@ -232,7 +232,7 @@ export const useStore = create((set, get) => ({
   },
 
   updateDoc(id, patch) {
-    set((s) => ({ documents: { ...s.documents, [id]: { ...s.documents[id], ...patch } } }));
+    set((s) => (s.documents[id] ? { documents: { ...s.documents, [id]: { ...s.documents[id], ...patch } } } : s));
   },
 
   markDirty(id) {
@@ -249,13 +249,25 @@ export const useStore = create((set, get) => ({
     get().updateDoc(id, { history: { past, future: [] } });
   },
 
+  /** Everything derived from a restored page list, so undo/redo can't
+   * leave the page count or the current page pointing at a document that
+   * no longer exists (undoing an insert used to leave the count one too
+   * high, and undoing a delete could strand the view past the last page). */
+  restoreSnapshot(doc, snap) {
+    return {
+      ...snap,
+      pageCount: snap.pages.length,
+      currentPage: Math.min(Math.max(1, doc.currentPage), snap.pages.length)
+    };
+  },
+
   undo(id) {
     const doc = get().documents[id];
     if (!doc || doc.history.past.length === 0) return;
     const past = [...doc.history.past];
     const prev = past.pop();
     const future = [snapshot(doc), ...doc.history.future].slice(0, MAX_HISTORY);
-    get().updateDoc(id, { ...prev, history: { past, future }, dirty: true, selection: null });
+    get().updateDoc(id, { ...get().restoreSnapshot(doc, prev), history: { past, future }, dirty: true, selection: null });
   },
 
   redo(id) {
@@ -264,7 +276,7 @@ export const useStore = create((set, get) => ({
     const future = [...doc.history.future];
     const next = future.shift();
     const past = [...doc.history.past, snapshot(doc)].slice(-MAX_HISTORY);
-    get().updateDoc(id, { ...next, history: { past, future }, dirty: true, selection: null });
+    get().updateDoc(id, { ...get().restoreSnapshot(doc, next), history: { past, future }, dirty: true, selection: null });
   },
 
   // ------------------------------------------------------------------
@@ -314,6 +326,7 @@ export const useStore = create((set, get) => ({
   },
   setToolOptions(id, patch) {
     const doc = get().documents[id];
+    if (!doc) return;
     get().updateDoc(id, { toolOptions: { ...doc.toolOptions, ...patch } });
   },
   selectObject(id, pageKey, objectId) {
@@ -324,7 +337,11 @@ export const useStore = create((set, get) => ({
   // Annotations
   // ------------------------------------------------------------------
   addAnnotation(id, pageKey, annotation, { record = true } = {}) {
+    // Guarded because these can be reached from async work that outlives
+    // the document - the background font upgrade after an in-place text
+    // edit, for one, which lands well after the user could have closed it.
     const doc = get().documents[id];
+    if (!doc) return;
     if (record) get().pushHistory(id);
     const list = [...(doc.annotations[pageKey] || []), annotation];
     get().updateDoc(id, {
@@ -336,6 +353,7 @@ export const useStore = create((set, get) => ({
 
   updateAnnotation(id, pageKey, objectId, patch, { record = false } = {}) {
     const doc = get().documents[id];
+    if (!doc) return;
     if (record) get().pushHistory(id);
     const list = (doc.annotations[pageKey] || []).map((a) => (a.id === objectId ? { ...a, ...patch } : a));
     get().updateDoc(id, { annotations: { ...doc.annotations, [pageKey]: list }, dirty: true });
@@ -343,6 +361,7 @@ export const useStore = create((set, get) => ({
 
   deleteAnnotation(id, pageKey, objectId) {
     const doc = get().documents[id];
+    if (!doc) return;
     get().pushHistory(id);
     const list = (doc.annotations[pageKey] || []).filter((a) => a.id !== objectId);
     get().updateDoc(id, {
@@ -361,12 +380,14 @@ export const useStore = create((set, get) => ({
   /** Paint order == array order (later entries render on top). */
   reorderAnnotations(id, pageKey, newList) {
     const doc = get().documents[id];
+    if (!doc) return;
     get().pushHistory(id);
     get().updateDoc(id, { annotations: { ...doc.annotations, [pageKey]: newList }, dirty: true });
   },
 
   moveAnnotationLayer(id, pageKey, objectId, direction) {
     const doc = get().documents[id];
+    if (!doc) return;
     const list = [...(doc.annotations[pageKey] || [])];
     const idx = list.findIndex((a) => a.id === objectId);
     if (idx < 0) return;
@@ -383,6 +404,7 @@ export const useStore = create((set, get) => ({
   // ------------------------------------------------------------------
   insertBlankPage(id, afterIndex, size) {
     const doc = get().documents[id];
+    if (!doc) return;
     get().pushHistory(id);
     const [w, h] = size || [612, 792];
     const key = `blank-${uuid()}`;
@@ -398,10 +420,14 @@ export const useStore = create((set, get) => ({
   },
 
   async insertPagesFromFile(id, afterIndex, fileMeta) {
-    const doc = get().documents[id];
-    get().pushHistory(id);
+    // The file is loaded before any state changes, so a failure here
+    // leaves nothing behind - no stray undo step for an insert that never
+    // happened.
     const pdfjsDoc = await openWithPdfJs(fileMeta.data);
     const meta = await buildPageMeta(pdfjsDoc);
+    const doc = get().documents[id];
+    if (!doc) return;
+    get().pushHistory(id);
     const sourceKey = `ext-${uuid()}`;
     addExternalSource(id, sourceKey, fileMeta.data);
     addExternalPdfjsDoc(id, sourceKey, pdfjsDoc);
@@ -422,19 +448,33 @@ export const useStore = create((set, get) => ({
 
   deletePage(id, pageKey) {
     const doc = get().documents[id];
+    if (!doc) return;
     if (doc.pages.length <= 1) {
       get().showToast('error', 'A document needs at least one page.');
       return;
     }
     get().pushHistory(id);
     const pages = doc.pages.filter((p) => p.key !== pageKey);
-    get().updateDoc(id, { pages, pageCount: pages.length, dirty: true });
+    const annotations = { ...doc.annotations };
+    delete annotations[pageKey];
+    get().updateDoc(id, {
+      pages,
+      pageCount: pages.length,
+      annotations,
+      // Deleting the page you were looking at would otherwise leave the
+      // view pointing past the end of the document.
+      currentPage: Math.min(doc.currentPage, pages.length),
+      selection: doc.selection?.pageKey === pageKey ? null : doc.selection,
+      dirty: true
+    });
   },
 
   duplicatePage(id, pageKey) {
     const doc = get().documents[id];
-    get().pushHistory(id);
+    if (!doc) return;
     const idx = doc.pages.findIndex((p) => p.key === pageKey);
+    if (idx < 0) return;
+    get().pushHistory(id);
     const original = doc.pages[idx];
     const copy = { ...original, key: `dup-${uuid()}` };
     const pages = [...doc.pages];
@@ -448,6 +488,7 @@ export const useStore = create((set, get) => ({
 
   rotatePage(id, pageKey, deltaDegrees) {
     const doc = get().documents[id];
+    if (!doc) return;
     get().pushHistory(id);
     const pages = doc.pages.map((p) =>
       p.key === pageKey ? { ...p, rotation: (((p.rotation + deltaDegrees) % 360) + 360) % 360 } : p
@@ -456,7 +497,6 @@ export const useStore = create((set, get) => ({
   },
 
   reorderPages(id, newPages) {
-    const doc = get().documents[id];
     get().pushHistory(id);
     get().updateDoc(id, { pages: newPages, dirty: true });
   },
@@ -465,8 +505,9 @@ export const useStore = create((set, get) => ({
   // Fonts
   // ------------------------------------------------------------------
   registerCustomFont(id, fontId, bytes, name) {
-    addCustomFont(id, fontId, bytes, name);
     const doc = get().documents[id];
+    if (!doc) return;
+    addCustomFont(id, fontId, bytes, name);
     const customFontsList = [...(doc.customFontsList || []), { id: fontId, name }];
     get().updateDoc(id, { customFontsList });
     registerLiveFontFace(name, bytes);
@@ -477,6 +518,7 @@ export const useStore = create((set, get) => ({
   // ------------------------------------------------------------------
   setSearch(id, patch) {
     const doc = get().documents[id];
+    if (!doc) return;
     get().updateDoc(id, { search: { ...doc.search, ...patch } });
   }
 }));

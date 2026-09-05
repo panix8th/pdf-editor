@@ -15,30 +15,43 @@ Fonts.
   single-page scrolling, zoom / fit-width / fit-page, page-number jump,
   thumbnail sidebar with drag-to-reorder, clickable outline/bookmarks,
   full-text search with highlighting and next/previous navigation.
-- **Editing** - click directly on existing PDF text to edit it in place:
-  font, size, color, and bold/italic are auto-detected from the PDF
-  itself, and the app tries to match the *original font* (fetching it
-  from Google Fonts if needed - see [Offline / privacy](#offline--privacy))
-  rather than falling back to a generic substitute. The original run is
-  covered with its sampled background color and the edit drawn on top -
-  PDF has no portable way to rewrite a content stream in place, so this is
-  the same approach every lightweight editor uses. When text is split
-  across several runs (e.g. an address block, where each line is a
-  separate run), click-and-drag with the Select tool to draw a marquee
-  over all of them at once - they merge into a single editable text box
-  instead of having to click and edit each line one by one; a plain click
-  (no drag) still edits a single run as before. Plus new text boxes
-  (font family/size/color/bold/italic/alignment, standard fonts, any font
-  installed on your PC via the Local Font Access picker, any font by name
-  from Google Fonts, or a loaded `.ttf`/`.otf`), images (one click inserts a PNG/JPG on the current
-  page, ready to drag/resize), rectangles, ellipses, lines, arrows,
-  freehand pen, highlights, and a redaction tool that rasterizes the
-  affected page so the underlying content is genuinely removed, not just
-  covered. A Layers panel shows every object on the page top-to-bottom
-  (paint order) with drag-to-reorder and front/forward/backward/back
-  controls. Insert/delete/duplicate/rotate/reorder pages, insert pages
-  from another PDF. Undo/redo and standard shortcuts (Ctrl+Z/Y, Ctrl+S,
-  Ctrl+O, Ctrl+F, Delete, ...).
+- **Text selection & editing** - drag across the page with the Select
+  tool to select text exactly like any PDF viewer (double-click for a
+  word, triple-click for a line), then either **Copy** it (Ctrl+C) or
+  **Edit text** (Enter) to replace it. Selecting across several runs -
+  an address block where every line is its own run, say - merges them
+  into one editable box rather than making you edit line by line.
+  Font, size, color and bold/italic are auto-detected from the PDF, and
+  the app tries to match the *original font* (fetching it from Google
+  Fonts if needed - see [Offline / privacy](#offline--privacy)) rather
+  than falling back to a generic substitute.
+
+  The replacement is **not** pasted over a white box. The original glyphs
+  are switched to PDF text rendering mode 3 (invisible) directly in the
+  page's content stream, so the edit lands on genuinely empty page - it
+  looks right over an image, a gradient or a table rule, where a cover
+  rectangle in a guessed background color always gave the game away. The
+  string itself is left untouched, so every advance and kern after it
+  stays bit-identical and nothing shifts. Where that mapping can't be
+  trusted (text drawn from inside a Form XObject, a clipping text mode),
+  the app detects it and falls back to the old cover-rectangle approach
+  rather than risking the wrong glyphs. Note this is not redaction: the
+  original characters stay in the text layer, invisible but still
+  findable - the Redact tool is what actually destroys content.
+- **Annotating** - new text boxes (font family/size/color/bold/italic/
+  alignment, standard fonts, any font installed on your PC via the Local
+  Font Access picker, any font by name from Google Fonts, or a loaded
+  `.ttf`/`.otf`), images (one click inserts a PNG/JPG on the current page,
+  ready to drag/resize), rectangles, ellipses, lines, arrows, freehand
+  pen, highlights, and a redaction tool that rasterizes the affected page
+  so the underlying content is genuinely removed, not just covered. A
+  Layers panel shows every object on the page top-to-bottom (paint order)
+  with drag-to-reorder and front/forward/backward/back controls.
+- **Pages & history** - insert/delete/duplicate/rotate/reorder pages,
+  insert pages from another PDF, undo/redo, and the standard shortcuts
+  (Ctrl+Z/Y, Ctrl+S, Ctrl+O, Ctrl+F, Delete, ...). Undo steps follow
+  whole actions, not keystrokes: typing a word or dragging a slider is one
+  step, not thirty.
 - **Forms** - detects existing AcroForm fields (text, checkbox, radio,
   dropdown) and fills them from a side panel. The Field tool also adds new
   fillable fields to a PDF that doesn't have them: draw a box, pick a type
@@ -61,8 +74,11 @@ Fonts.
   light/dark theme with three accent colors (lilac/orchid/periwinkle),
   persisted across restarts; an empty-state drop zone with a real
   Recent-files list; lazy page rendering so large (100+ page) documents
-  stay responsive; and clear error/password prompts instead of silent
-  failures on corrupt or encrypted files.
+  stay responsive; pages and thumbnails rendered at the display's real
+  pixel density so text stays sharp on HiDPI/scaled displays; and clear
+  error/password prompts instead of silent failures on corrupt or
+  encrypted files. Closing a tab or the window with unsaved edits always
+  prompts (Save / Discard / Cancel) - nothing is thrown away silently.
 
 ## Tech stack
 
@@ -96,7 +112,7 @@ pdf-editor/
 │     │  ├─ Toolbar.jsx      Grouped icon toolbar (file, history, tools, signing, zoom/page)
 │     │  ├─ Sidebar.jsx      Icon rail + resizable side panel (thumbnails/outline/search/forms/layers)
 │     │  ├─ Viewer.jsx       Page rendering + the floating view dock
-│     │  ├─ AnnotationLayer.jsx  Interactive overlay: click-to-edit text, shapes, marquee-select
+│     │  ├─ AnnotationLayer.jsx  Interactive overlay: text selection, edit-in-place, shapes
 │     │  ├─ PropertiesPanel.jsx  Contextual to the active tool/selection
 │     │  ├─ Icons.jsx        Shared 20x20-grid stroke icon set
 │     │  ├─ PaperlightMark.jsx  The brand mark (see assets/brand/)
@@ -114,9 +130,14 @@ pdf-editor/
 │        ├─ shapeGeometry.js  Shape math shared by the live preview and the saved output
 │        ├─ placeImage.js  Native "insert an image" picker + placement (content-sniffed, not by extension)
 │        ├─ formFields.js  Field-name uniqueness helpers for the Field tool
+│        ├─ textRuns.js    Text runs on a page (geometry, font, color) + their content-stream operator index
+│        ├─ textSelection.js  Character-level selection geometry over those runs
+│        ├─ contentStreamText.js  Content-stream surgery: makes edited glyphs invisible in place
 │        └─ textSearch.js  Full-text search over a pdf.js document
 ├─ scripts/
 │  ├─ verify-encryption.mjs  Standalone round-trip test for security.js (see Testing)
+│  ├─ text-surgery-test.mjs  Tokenizer + visual proof that hiding a text run works (see Testing)
+│  ├─ text-search-test.mjs   Search over real pdf.js output, incl. phrases split across items
 │  ├─ smoke-test.mjs         Headless Electron smoke test via Playwright
 │  └─ make-icons.mjs         Regenerates build/icon.png + build/icon.ico from scripts/icon.svg
 ├─ assets/brand/          Paperlight brand assets (mark, wordmark, icon source) + their own README
@@ -186,22 +207,36 @@ iterating on the icon design before finalizing a brand asset drop), run
 
 ## Testing
 
-There's no full test suite (out of scope for this build), but two scripts
-validate the highest-risk, hand-rolled pieces:
+`npm test` runs all three suites. They cover the highest-risk,
+hand-rolled pieces rather than aiming for blanket coverage:
 
-- `node scripts/verify-encryption.mjs` - encrypts a PDF with `security.js`,
-  then confirms an independent implementation (pdf.js) can decrypt it with
-  the user *and* owner password, rejects wrong passwords, and that
+- `npm run test:encryption` - encrypts a PDF with `security.js`, then
+  confirms an independent implementation (pdf.js) can decrypt it with the
+  user *and* owner password, rejects wrong passwords, and that
   `removePasswordProtection` correctly strips protection.
-- `node scripts/smoke-test.mjs` - launches the real packaged app under
-  Playwright/Xvfb, opens a generated PDF, and exercises the toolbar/canvas
-  to catch boot-time or render-time crashes; also confirms the frameless
-  title bar and menu bar render and that Ctrl+O actually reaches the
-  renderer's keyboard-accelerator handler (see "Window chrome" above).
-  Xvfb in this sandbox runs with no window manager at all, so minimize/
-  maximize can't be verified for a real state change here the way it can
-  on an actual Windows desktop - the smoke test only checks that the IPC
-  calls complete without throwing.
+- `npm run test:surgery` - checks `contentStreamText.js`: that the
+  tokenizer never mistakes string, hex-string, comment or inline-image
+  payload for an operator (hiding the wrong one would corrupt the page),
+  and then *renders* a page before and after an edit with real pdf.js,
+  counting dark pixels per line. That last part is the only check that
+  actually proves the claim: the edited line's glyphs are gone and every
+  other line is pixel-identical.
+- `npm run test:search` - runs `textSearch.js` against real pdf.js output,
+  including the case that actually breaks naive implementations: pdf.js
+  splits a line into several "items", so a multi-word query usually
+  straddles a boundary and searching item-by-item finds nothing.
+- `npm run test:smoke` - launches the real packaged app under
+  Playwright/Xvfb and drives it end to end: drag-select text on the page,
+  Ctrl+C, "Edit text", draw every shape, insert images (including a JPEG
+  mislabeled `.png`), add a form field, then Save As and inspect the
+  saved file - the edited run is invisible in the content stream, a real
+  PDF reader sees the replacement text, and **no white cover rectangle was
+  painted**. It also covers text the built-in fonts can't encode and the
+  unsaved-changes prompt on both tab close and window close. Xvfb in this
+  sandbox runs with no window manager at all, so minimize/maximize can't
+  be verified for a real state change the way it can on an actual Windows
+  desktop - the smoke test only checks that those IPC calls complete
+  without throwing.
 
 ## Known limitations
 
@@ -212,16 +247,18 @@ validate the highest-risk, hand-rolled pieces:
   the properties panel checks this as you rename one, and the save path
   also resolves any leftover collision (e.g. against a field already in
   the original PDF) by appending a number rather than failing the save.
-- **Editing existing text** covers the original run (background color
-  sampled from the rendered page) and draws the edit on top, rather than
-  rewriting the PDF's content stream - there's no portable, general way to
-  do the latter. Its click-target granularity is per text run as pdf.js
-  reports them, which is usually a word or short phrase rather than an
-  entire sentence. Font/color detection correlates pdf.js's text-content
-  items with its low-level drawing operators by sequence order, which
-  holds for the vast majority of real PDFs but can occasionally mismatch
-  on documents with unusual kerning-adjustment structures - the color/font
-  picker in the properties panel is always right there to fix it.
+- **Editing existing text** replaces whole text runs, not arbitrary
+  character ranges: a selection covering half a run still replaces that
+  entire run, because the save path hides whole content-stream operators.
+  Runs are as pdf.js reports them, usually a word or short phrase. The
+  original glyphs are made invisible rather than deleted, so they remain
+  in the text layer and are still found by a search or copy - use Redact
+  when content genuinely has to be destroyed. Font/color detection (and
+  the run-to-operator mapping the in-place edit depends on) correlates
+  pdf.js's text-content items with its low-level drawing operators by
+  sequence order; the app verifies the two counts agree before touching
+  anything and falls back to a cover rectangle when they don't, so a
+  mismatch degrades rather than corrupts.
 - **Automatic font matching for click-to-edit-text** tries, in order: (1)
   the exact original font if it's already installed on this PC (via
   Chromium's Local Font Access API - no network, no substitute, the real
@@ -264,6 +301,14 @@ validate the highest-risk, hand-rolled pieces:
 - Very large documents (500+ pages) render lazily but aren't fully
   virtualized (rendered pages stay in the DOM once shown), so extremely
   long documents may use more memory than a dedicated virtualized viewer.
+- **The built-in fonts (Helvetica/Times/Courier) are limited to WinAnsi**,
+  which is a PDF-format limitation, not an app one - they have no glyphs
+  for arrows, box-drawing characters, Cyrillic, CJK or emoji. Rather than
+  failing the save (which is what pdf-lib does on its own), such
+  characters are substituted with the closest available equivalent and
+  you're told which ones changed. Pick a system or Google font for that
+  text and it's embedded as a full Unicode subset with no substitution at
+  all.
 
 ## Offline / privacy
 

@@ -9,11 +9,12 @@ const ACCENTS = [
 ];
 
 /**
- * Item lists mirror src/main/menu.js one-for-one (same action ids, same
- * shortcuts) since this replaces its *visible* menu bar - frame:false
- * hides the native one, but Menu.setApplicationMenu there still owns
- * keyboard accelerators. `disabled` reads live doc state so items grey
- * out exactly like the native menu would.
+ * The application menu, drawn by the renderer: frame:false removes the
+ * native one entirely (main.js sets no application menu at all, because
+ * its accelerators stopped firing once the bar was hidden), so this and
+ * App.jsx's keydown handler are the only two ways to reach any command.
+ * Both dispatch the same action ids through runMenuAction. `disabled`
+ * reads live document state so items grey out like a native menu would.
  */
 function buildMenus(hasDoc, hasSelection, canUndo, canRedo) {
   return [

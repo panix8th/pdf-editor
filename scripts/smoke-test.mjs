@@ -16,11 +16,14 @@
  */
 import pw from '/opt/node22/lib/node_modules/playwright/index.js';
 const { _electron: electron } = pw;
-import { PDFDocument, StandardFonts } from 'pdf-lib';
+import { PDFArray, PDFDocument, PDFRawStream, StandardFonts, decodePDFRawStream } from 'pdf-lib';
 import path from 'path';
 import fs from 'fs/promises';
 import os from 'os';
 import { fileURLToPath } from 'url';
+// The legacy build is CommonJS, so its API hangs off the default export.
+import pdfjsModule from 'pdfjs-dist/legacy/build/pdf.js';
+const pdfjs = pdfjsModule.default || pdfjsModule;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..');
@@ -39,6 +42,63 @@ async function makeTestPdf() {
 function assert(cond, msg) {
   if (!cond) throw new Error('FAIL: ' + msg);
   console.log('OK:', msg);
+}
+
+/** A page's /Contents decoded to one latin1 string. It's either a single
+ * stream or an array of streams that concatenate into one logical stream -
+ * pdf-lib appends its own drawing as an extra array entry, so both cases
+ * have to be handled to see everything painted on the page. */
+function decodePageContent(page) {
+  const raw = page.node.Contents();
+  const contents = raw instanceof PDFArray || raw instanceof PDFRawStream ? raw : page.node.context.lookup(raw);
+  const streams =
+    contents instanceof PDFArray
+      ? Array.from({ length: contents.size() }, (_, i) => contents.lookup(i)).filter((s) => s instanceof PDFRawStream)
+      : contents instanceof PDFRawStream
+        ? [contents]
+        : [];
+  const parts = streams.map((s) => Buffer.from(decodePDFRawStream(s).decode()));
+  const bytes = Buffer.concat(parts.flatMap((p, i) => (i === 0 ? [p] : [Buffer.from('\n'), p])));
+  const text = bytes.toString('latin1');
+  return { bytes: new Uint8Array(bytes), text, strings: showTextStrings(text) };
+}
+
+/** Every string a page's content stream shows, decoded. pdf-lib writes
+ * text for the standard-14 fonts as hex (`<48656C6C6F> Tj`), not as a
+ * literal `(Hello)`, so a plain substring search over the raw stream finds
+ * nothing even when the text is right there.
+ *
+ * Note this only reads back single-byte encodings: text drawn in an
+ * embedded (subset) font is a sequence of glyph indices, and recovering
+ * characters from those needs the font's ToUnicode map - that's what
+ * extractPageText below is for. */
+function showTextStrings(streamText) {
+  const out = [];
+  for (const m of streamText.matchAll(/<([0-9A-Fa-f\s]+)>\s*(?:Tj|TJ|'|")/g)) {
+    out.push(Buffer.from(m[1].replace(/\s+/g, ''), 'hex').toString('latin1'));
+  }
+  for (const m of streamText.matchAll(/\(((?:[^()\\]|\\.)*)\)\s*(?:Tj|TJ|'|")/g)) {
+    out.push(m[1].replace(/\\([()\\])/g, '$1'));
+  }
+  return out;
+}
+
+/** What a real PDF reader would show on a page - the check that actually
+ * matters for "did the edit land", since it resolves embedded subset fonts
+ * through their ToUnicode maps. */
+async function extractPageText(bytes, pageNumber) {
+  const doc = await pdfjs.getDocument({
+    data: new Uint8Array(bytes),
+    isEvalSupported: false,
+    // Without this pdf.js logs a warning for every standard-14 font it
+    // wants metrics for; the files ship with the package.
+    standardFontDataUrl: path.join(root, 'node_modules', 'pdfjs-dist', 'standard_fonts') + path.sep
+  }).promise;
+  const page = await doc.getPage(pageNumber);
+  const content = await page.getTextContent();
+  const text = content.items.map((i) => i.str).join(' ');
+  await doc.destroy();
+  return text;
 }
 
 async function main() {
@@ -99,11 +159,54 @@ async function main() {
   const canvasCount = await win.locator('.page-shell canvas').count();
   assert(canvasCount >= 1, `PDF rendered (${canvasCount} canvas(es))`);
 
-  // --- click-to-edit existing text -----------------------------------
-  await win.locator('.text-hit-target').first().click();
-  await win.waitForTimeout(300);
-  let textareaCount = await win.locator('textarea.field').count();
-  assert(textareaCount > 0, 'clicking existing PDF text opens an inline editor');
+  // --- select existing text by dragging, like any PDF viewer ------------
+  // The page is 612x792pt; the headline sits at x=50, baseline y=700,
+  // 24pt - so in top-left storage space it spans y 68..92. Convert to
+  // screen through the live render scale.
+  const shell0 = win.locator('.page-shell').first();
+  const shell0Box = await shell0.boundingBox();
+  const pageScale = shell0Box.width / 612;
+  const atPage = (px, py) => ({ x: shell0Box.x + px * pageScale, y: shell0Box.y + py * pageScale });
+
+  const textStart = atPage(55, 80);
+  const textEnd = atPage(360, 80);
+  await win.mouse.move(textStart.x, textStart.y);
+  await win.mouse.down();
+  await win.mouse.move(textEnd.x, textEnd.y, { steps: 10 });
+  await win.mouse.up();
+  await win.waitForTimeout(250);
+
+  assert(
+    (await win.locator('.text-selection').count()) >= 1,
+    'dragging across page text paints a selection highlight'
+  );
+  assert(
+    (await win.locator('.text-selection-toolbar').count()) === 1,
+    'a floating Edit text / Copy toolbar appears for the selection'
+  );
+
+  // --- Ctrl+C copies the real text through Electron's clipboard ---------
+  await app.evaluate(({ clipboard }) => clipboard.writeText('__cleared__'));
+  await win.keyboard.press('Control+C');
+  await win.waitForTimeout(400);
+  const copied = await app.evaluate(({ clipboard }) => clipboard.readText());
+  assert(
+    copied.includes('Smoke Test PDF'),
+    `Ctrl+C copies the selected page text (got ${JSON.stringify(copied)})`
+  );
+
+  // --- "Edit text" turns the selection into an editable box -------------
+  await win.locator('.text-selection-toolbar button', { hasText: 'Edit text' }).click();
+  await win.waitForTimeout(400);
+  let textareaCount = await win.locator('.page-overlay textarea.field').count();
+  assert(textareaCount === 1, `"Edit text" opens exactly one inline editor (got ${textareaCount})`);
+
+  // Replace the original wording, so the saved file can be checked for
+  // both the new text and the absence of a cover rectangle.
+  const inlineEditor = win.locator('.page-overlay textarea.field').first();
+  await inlineEditor.fill('Replaced In Place');
+  await inlineEditor.blur();
+  await win.waitForTimeout(250);
 
   // Deselect (setTool('select') clears doc.selection).
   await win.locator('.tcbtn[title="Select"]').click();
@@ -266,16 +369,120 @@ async function main() {
     'saved PDF embeds the inserted image as an XObject'
   );
 
+  // --- the edited text was hidden in the content stream, not covered ----
+  // This is the whole point of the in-place edit: the original glyphs are
+  // switched to text rendering mode 3 (invisible) right where they were
+  // drawn, so the replacement lands on genuinely empty page - no white
+  // rectangle in a guessed background color, which is what used to make an
+  // edit look pasted-on over anything but a flat background.
+  const page1 = decodePageContent(reloaded.getPages()[0]);
+  assert(
+    / 3 Tr /.test(page1.text),
+    'the edited run was switched to invisible text mode in the page content stream'
+  );
+  // The replacement is drawn as an additional text op rather than
+  // replacing the original in situ - the original is kept, just invisible,
+  // so every following advance and position in that text object stays
+  // bit-identical.
+  assert(
+    page1.strings.includes('Smoke Test PDF - Hello World'),
+    'the original run is still present in the stream, just invisible - nothing after it can shift'
+  );
+  const savedPageText = await extractPageText(saved, 1);
+  assert(
+    savedPageText.includes('Replaced In Place'),
+    `a PDF reader sees the replacement text on the page (got ${JSON.stringify(savedPageText)})`
+  );
+  // The cover rectangle is filled with the sampled background color, which
+  // on this white test page is white. Its absence is the actual payoff:
+  // nothing is painted over the page to hide the old glyphs.
+  assert(
+    !/\b1 1 1 rg\b/.test(page1.text),
+    'no white cover rectangle was painted over the original text'
+  );
+
   const bakedField = reloaded.getForm().getFieldMaybe('SmokeTestField');
   assert(!!bakedField, 'the Field tool baked a real "SmokeTestField" AcroForm field');
   assert(bakedField.constructor.name === 'PDFTextField', `it is a real text field (got ${bakedField?.constructor?.name})`);
   assert(bakedField.getText() === 'hello field', `its test value round-tripped (got ${JSON.stringify(bakedField?.getText())})`);
 
+  // --- text the built-in fonts can't encode still saves ------------------
+  // The 14 base PDF fonts are limited to WinAnsi; pdf-lib refuses to guess
+  // and throws on anything outside it, which used to abort the whole save
+  // over one character. Those characters are now substituted and reported.
+  await win.locator('.tcbtn[title="Text"]').click();
+  await win.mouse.click(box.x + 100, box.y + 520);
+  await win.waitForTimeout(300);
+  const unicodeBox = win.locator('.page-overlay textarea.field').first();
+  await unicodeBox.fill('arrow → and Ж');
+  await unicodeBox.blur();
+  await win.locator('.tcbtn[title="Select"]').click();
+  await win.waitForTimeout(200);
+
+  const unicodePath = path.join(os.tmpdir(), `smoke-unicode-${Date.now()}.pdf`);
+  await app.evaluate(({ dialog }, target) => {
+    dialog.showSaveDialog = async () => ({ canceled: false, filePath: target });
+  }, unicodePath);
+  await win.locator('.menubar-item', { hasText: 'File' }).click();
+  await win.locator('.menubar-dropdown-item', { hasText: 'Save As...' }).click();
+  await win.waitForTimeout(1200);
+
+  const unicodeSaved = await fs.readFile(unicodePath).catch(() => null);
+  assert(!!unicodeSaved, 'a document containing non-WinAnsi characters still saves');
+  const unicodePage = decodePageContent((await PDFDocument.load(unicodeSaved)).getPages()[0]);
+  assert(
+    unicodePage.strings.includes('arrow -> and ?'),
+    `unencodable characters are substituted, not dropped or fatal (found ${JSON.stringify(unicodePage.strings)})`
+  );
+  await fs.unlink(unicodePath).catch(() => {});
+
+  // --- unsaved changes are never discarded silently ---------------------
+  // The save above cleared the dirty flag, so make a fresh edit and then
+  // try to close: both the tab's X and the window's close button must stop
+  // and ask rather than throwing the work away.
+  await win.locator('.tcbtn[title="Rectangle"]').click();
+  await win.mouse.move(box.x + 60, box.y + 400);
+  await win.mouse.down();
+  await win.mouse.move(box.x + 160, box.y + 450, { steps: 5 });
+  await win.mouse.up();
+  await win.waitForTimeout(300);
+  assert((await win.locator('.doctab-dirty').count()) === 1, 'a new edit marks the document dirty');
+
+  await win.locator('.doctab-close').first().click();
+  await win.waitForTimeout(400);
+  assert(
+    (await win.locator('.modal', { hasText: 'Unsaved changes' }).count()) === 1,
+    'closing a tab with unsaved edits asks before discarding them'
+  );
+  await win.locator('.modal button', { hasText: 'Cancel' }).click();
+  await win.waitForTimeout(200);
+  assert((await win.locator('.doctab').count()) === 1, 'cancelling keeps the document open');
+
+  // The window close goes through the main process, which must veto the
+  // close and hand it back to the renderer to ask.
+  await win.locator('.winctl.close').click();
+  await win.waitForTimeout(500);
+  assert(
+    (await win.locator('.modal', { hasText: 'Unsaved changes' }).count()) === 1,
+    'closing the window with unsaved edits asks before discarding them'
+  );
+  assert((await app.windows()).length === 1, 'the window is still open while the prompt is up');
+  // Discard actually closes the window, which tears the page down mid-click
+  // - Playwright reports that as an error even though the click landed.
+  await win
+    .locator('.modal button', { hasText: 'Discard' })
+    .click({ noWaitAfter: true })
+    .catch(() => {});
+  await new Promise((r) => setTimeout(r, 1200));
+  assert((await app.windows()).length === 0, 'discarding closes the window');
+
   await fs.unlink(savePath).catch(() => {});
   await fs.unlink(imgPath).catch(() => {});
   await fs.unlink(jpegAsPngPath).catch(() => {});
 
-  await app.close();
+  await app.close().catch(() => {
+    /* "Discard" already closed the window */
+  });
 
   if (rendererErrors.length) {
     console.error('Renderer errors seen during the run:', rendererErrors);

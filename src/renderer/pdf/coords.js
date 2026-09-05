@@ -84,7 +84,3 @@ export function storageRectToPdfLib(rect, pageHeight) {
   };
 }
 
-/** Convert an array of storage-space {x,y} points (e.g. a pen stroke) to pdf-lib space. */
-export function storagePointsToPdfLib(points, pageHeight) {
-  return points.map((p) => ({ x: p.x, y: pageHeight - p.y }));
-}

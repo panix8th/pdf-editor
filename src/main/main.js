@@ -1,6 +1,6 @@
 'use strict';
 
-const { app, BrowserWindow, dialog, ipcMain, Menu, session } = require('electron');
+const { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, session } = require('electron');
 const path = require('path');
 const fs = require('fs/promises');
 const { signWithP12, verifySignatures } = require('./signing');
@@ -10,10 +10,16 @@ const isDev = process.env.NODE_ENV === 'development';
 
 // Fully offline app: never let Electron/Chromium phone home for updates,
 // spellcheck dictionaries, etc.
-app.setPath('crashDumps', path.join(app.getPath('temp'), 'pdf-editor-crashdumps'));
+app.setPath('crashDumps', path.join(app.getPath('temp'), 'paperlight-crashdumps'));
 app.commandLine.appendSwitch('disable-http-cache');
 
 let mainWindow = null;
+// Mirrors the renderer's "any document has unsaved edits" state, so the
+// close handler below only interrupts when there is something to lose.
+let hasUnsavedChanges = false;
+// Set once the user has confirmed, so the second close attempt goes
+// through instead of prompting again.
+let forceClosing = false;
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -56,6 +62,16 @@ function createWindow() {
   } else {
     mainWindow.loadFile(path.join(__dirname, '..', '..', 'dist', 'index.html'));
   }
+
+  // Never let the window take unsaved edits down with it. Any close route
+  // - the title bar's X, Alt+F4, the taskbar - lands here first; the
+  // renderer owns the actual prompt (it knows the documents) and calls
+  // back through 'window:forceClose' once the user has decided.
+  mainWindow.on('close', (e) => {
+    if (!hasUnsavedChanges || forceClosing) return;
+    e.preventDefault();
+    mainWindow.webContents.send('window:closeRequested');
+  });
 
   mainWindow.on('closed', () => {
     mainWindow = null;
@@ -131,6 +147,13 @@ ipcMain.handle('window:maximizeToggle', () => {
   else mainWindow.maximize();
 });
 ipcMain.handle('window:close', () => mainWindow?.close());
+ipcMain.handle('window:forceClose', () => {
+  forceClosing = true;
+  mainWindow?.close();
+});
+ipcMain.handle('window:setHasUnsavedChanges', (_evt, value) => {
+  hasUnsavedChanges = !!value;
+});
 ipcMain.handle('window:isMaximized', () => !!mainWindow?.isMaximized());
 
 // ---------------------------------------------------------------------------
@@ -226,6 +249,15 @@ ipcMain.handle('sign:verify', async (_evt, pdfBytes) => {
 });
 
 ipcMain.handle('app:getVersion', () => app.getVersion());
+
+// Copying selected page text goes through Electron's clipboard rather than
+// navigator.clipboard: the web API is permission-gated and rejects
+// silently when the document isn't focused, which is exactly the moment a
+// user hits Ctrl+C after dragging a selection across the canvas.
+ipcMain.handle('clipboard:writeText', (_evt, text) => {
+  clipboard.writeText(String(text ?? ''));
+  return true;
+});
 
 ipcMain.handle('fonts:fetchGoogleFont', async (_evt, { family, bold, italic }) => {
   try {

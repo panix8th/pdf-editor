@@ -92,43 +92,124 @@ export default function App() {
     for (const f of files) await openFile(f);
   }, [openFile]);
 
-  const doSave = useCallback(
-    async (forcePathPicker) => {
-      const doc = useStore.getState().documents[useStore.getState().activeId];
-      if (!doc) return;
+  // Baking a document is slow enough that a second Ctrl+S can land while
+  // the first is still writing; without this the two runs race on the same
+  // path and the "Saved" toast can arrive before the bytes do.
+  const savingRef = useRef(false);
+
+  /** @returns {Promise<boolean>} whether the document ended up on disk -
+   * the close flow needs to know, since "Save" that hits Cancel in the
+   * file dialog must not then close the document. */
+  const saveDocument = useCallback(
+    async (docId, forcePathPicker) => {
+      const doc = useStore.getState().documents[docId];
+      if (!doc) return false;
       if (doc.isEncrypted && doc.editingUnsupported) {
         showToast('error', 'This PDF’s encryption type is not supported for saving edits.');
-        return;
+        return false;
       }
+      if (savingRef.current) return false;
+      savingRef.current = true;
       try {
         const resources = getResource(doc.id);
-        const bytes = await bakeDocument({ docState: doc, resources, formValues: doc.formValues });
+        const bytes = await bakeDocument({
+          docState: doc,
+          resources,
+          formValues: doc.formValues,
+          // Anything the save had to change to stay valid (e.g. characters
+          // the built-in fonts can't draw) is surfaced instead of being
+          // applied silently.
+          onWarning: (message) => showToast('info', message)
+        });
         if (!forcePathPicker && doc.filePath) {
           await window.pdfEditor.writeToPath(doc.filePath, bytes);
           updateDoc(doc.id, { dirty: false, fileSize: bytes.length });
           showToast('info', `Saved to ${doc.filePath}`);
-        } else {
-          const savedPath = await window.pdfEditor.saveAs(doc.name, bytes);
-          if (savedPath) {
-            updateDoc(doc.id, { dirty: false, filePath: savedPath, name: savedPath.split(/[\\/]/).pop(), fileSize: bytes.length });
-            showToast('info', `Saved to ${savedPath}`);
-          }
+          return true;
         }
+        const savedPath = await window.pdfEditor.saveAs(doc.name, bytes);
+        if (!savedPath) return false; // the user cancelled the file dialog
+        updateDoc(doc.id, { dirty: false, filePath: savedPath, name: savedPath.split(/[\\/]/).pop(), fileSize: bytes.length });
+        showToast('info', `Saved to ${savedPath}`);
+        return true;
       } catch (err) {
         console.error('Save failed:', err);
         const reason = err && err.message ? err.message : 'an unknown error occurred';
         showToast('error', `Save failed: ${reason}`);
+        return false;
+      } finally {
+        savingRef.current = false;
       }
     },
     [showToast, updateDoc]
   );
 
+  const doSave = useCallback(
+    (forcePathPicker) => saveDocument(useStore.getState().activeId, forcePathPicker),
+    [saveDocument]
+  );
+
+  /**
+   * Closing anything with unsaved edits goes through here rather than
+   * straight to closeDocument, so work is never discarded without asking.
+   * @param {string[]} ids documents about to be closed
+   * @param {() => void} proceed what to do once they're safe to discard
+   */
+  const confirmDiscard = useCallback(
+    (ids, proceed) => {
+      const state = useStore.getState();
+      const dirty = ids.map((id) => state.documents[id]).filter((d) => d && d.dirty);
+      if (dirty.length === 0) {
+        proceed();
+        return;
+      }
+      openDialog('confirmClose', {
+        names: dirty.map((d) => d.name),
+        onDiscard: () => {
+          useStore.getState().closeDialog();
+          proceed();
+        },
+        onSave: async () => {
+          for (const d of dirty) {
+            // Stop at the first one the user backs out of - closing the
+            // rest would discard exactly what they just declined to lose.
+            if (!(await saveDocument(d.id, false))) return;
+          }
+          useStore.getState().closeDialog();
+          proceed();
+        }
+      });
+    },
+    [openDialog, saveDocument]
+  );
+
+  const requestCloseDocument = useCallback(
+    (id) => confirmDiscard([id], () => closeDocument(id)),
+    [confirmDiscard, closeDocument]
+  );
+
+  // The window's close button and Alt+F4 are intercepted in the main
+  // process, which asks here first (see 'window:confirmClose').
+  useEffect(
+    () =>
+      window.pdfEditor.onWindowCloseRequested(() => {
+        confirmDiscard(useStore.getState().order, () => window.pdfEditor.windowControls.forceClose());
+      }),
+    [confirmDiscard]
+  );
+
+  // Keep the main process's "is it safe to close" flag in sync, so it only
+  // interrupts a close when there is actually something to lose.
+  const anyDirty = order.some((id) => documents[id]?.dirty);
+  useEffect(() => {
+    window.pdfEditor.setHasUnsavedChanges(anyDirty);
+  }, [anyDirty]);
+
   // ---- menu actions -----------------------------------------------------
-  // Shared by the native accelerators (forwarded from main via IPC - see
-  // menu.js, whose click handlers still fire even though frame:false hides
-  // the native menu bar those accelerators would otherwise live in) and the
-  // custom-styled MenuBar the renderer draws in its place, so both paths
-  // run identical logic.
+  // The single implementation of every command, shared by the custom
+  // MenuBar the renderer draws and by the keyboard accelerators below.
+  // There is no native menu at all (see main.js), so these two are the
+  // only ways any of this can be invoked.
   const runMenuAction = useCallback(
     (action) => {
       const s = useStore.getState();
@@ -159,7 +240,7 @@ export default function App() {
           else showToast('error', 'Open a PDF first.');
           break;
         case 'file:close':
-          if (doc) closeDocument(doc.id);
+          if (doc) requestCloseDocument(doc.id);
           break;
         case 'edit:undo':
           if (doc) undo(doc.id);
@@ -257,7 +338,7 @@ export default function App() {
           break;
       }
     },
-    [handleOpenDialog, doSave, openDialog, showToast, closeDocument, undo, redo, deleteSelected, setTool, setZoom, setFitMode, toggleSidebar, toggleTheme]
+    [handleOpenDialog, doSave, openDialog, showToast, requestCloseDocument, undo, redo, deleteSelected, setTool, setZoom, setFitMode, toggleSidebar, toggleTheme]
   );
 
   // Renderer-side keyboard accelerators (Ctrl+O, Ctrl+S, ...) - the sole
@@ -337,7 +418,7 @@ export default function App() {
       onDragLeave={() => setDragging(false)}
       onDrop={onDrop}
     >
-      <TitleBar onOpen={handleOpenDialog} />
+      <TitleBar onOpen={handleOpenDialog} onCloseDocument={requestCloseDocument} />
       <MenuBar runMenuAction={runMenuAction} />
       <Toolbar onOpen={handleOpenDialog} onSave={() => doSave(false)} onSaveAs={() => doSave(true)} />
 

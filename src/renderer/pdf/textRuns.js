@@ -2,13 +2,15 @@ import pdfjsLib from './pdfjsSetup';
 
 /**
  * Extracts every text run on a page (position + size in storage space, plus
- * an auto-detected font family/size/color) so the viewer can offer "click
- * existing text to edit it." pdf-lib/PDF in general has no supported way to
- * truly rewrite a content stream's text in place, so editing works by
- * covering the original run with a sampled background color and drawing
- * the edited text on top (see AnnotationLayer's text-hit layer and
- * documentIO's `coverRect` handling) - the same cover-and-replace approach
- * used for redaction, just without permanently flattening the page.
+ * an auto-detected font family/size/color) so the viewer can offer text
+ * selection and "edit this text in place".
+ *
+ * Each run also carries the index of the content-stream operator that drew
+ * it, which is what lets the save path make the original glyphs genuinely
+ * invisible (see pdf/contentStreamText.js) rather than hiding them under a
+ * rectangle in a guessed background color. The cover rectangle is still
+ * kept on the annotation as a fallback for the cases where that operator
+ * mapping can't be trusted - see `indexAligned` below.
  */
 
 function u8ToHex(r, g, b) {
@@ -73,10 +75,22 @@ function tryGetRealFontName(pdfPage, fontId) {
   return null;
 }
 
+/**
+ * @returns {Promise<{runs: Array, textOpCount: number, indexAligned: boolean}>}
+ *   `indexAligned` says whether each run's `opIndex` can be trusted to
+ *   identify the matching text-showing operator in the page's content
+ *   stream. pdf.js builds getTextContent() items with its own
+ *   merge/split heuristics, so they are only guaranteed to line up 1:1
+ *   with show-text operators when the two counts agree - and editing the
+ *   wrong glyphs is far worse than falling back, so this is checked
+ *   rather than assumed.
+ */
 export async function extractTextRuns(pdfPage) {
   const textContent = await pdfPage.getTextContent();
   const viewport = pdfPage.getViewport({ scale: 1, rotation: 0 });
   const colors = await extractTextColorsInOrder(pdfPage).catch(() => []);
+  const textOpCount = colors.length;
+  const indexAligned = textOpCount === textContent.items.length;
   const runs = [];
 
   let i = 0;
@@ -121,6 +135,9 @@ export async function extractTextRuns(pdfPage) {
     runs.push({
       id: `run-${i++}`,
       str: item.str,
+      // Which text-showing operator drew this run, so the save path can
+      // make exactly those glyphs invisible instead of covering them.
+      opIndex: indexAligned ? itemIndex : null,
       rect: { x, y, w, h },
       fontSize: Math.round(fontHeight * 100) / 100,
       fontFamilyHint: style?.fontFamily || '',
@@ -130,7 +147,7 @@ export async function extractTextRuns(pdfPage) {
       color
     });
   }
-  return runs;
+  return { runs, textOpCount, indexAligned };
 }
 
 /** Map a pdf.js font-family hint to one of our embeddable standard fonts.

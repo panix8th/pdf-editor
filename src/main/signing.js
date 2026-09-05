@@ -56,7 +56,7 @@ function findSignatureBlocks(pdfLatin1) {
     const windowEnd = Math.min(pdfLatin1.length, match.index + 4000);
     const window = pdfLatin1.slice(windowStart, windowEnd);
     const contentsMatch = window.match(/\/Contents\s*<([0-9a-fA-F]+)>/);
-    const subFilterMatch = window.match(/\/SubFilter\s*\/([A-Za-z0-9.\-]+)/);
+    const subFilterMatch = window.match(/\/SubFilter\s*\/([A-Za-z0-9.-]+)/);
     if (contentsMatch) {
       blocks.push({
         byteRange,
@@ -119,7 +119,6 @@ function verifySignatures(pdfBytes) {
       md.update(signedContent.toString('binary'));
       const digest = md.digest().toHex();
 
-      const signerInfo = p7.rawCapture && p7.rawCapture.digestAlgorithm;
       const messageDigestAttr = p7.rawCapture && p7.rawCapture.messageDigest
         ? forge.util.bytesToHex(p7.rawCapture.messageDigest)
         : null;

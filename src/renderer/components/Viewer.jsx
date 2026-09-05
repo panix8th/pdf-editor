@@ -37,7 +37,6 @@ function resolvePdfjsDoc(resources, page) {
   return resources.externalPdfjsDocs?.get(page.source) || null;
 }
 
-const PAGE_GAP = 18;
 const PADDING = 24;
 
 export default function Viewer() {
@@ -146,7 +145,6 @@ function PageView({ doc, page, index, containerSize, registerRef }) {
   const canvasRef = useRef(null);
   const [visible, setVisible] = useState(index < 2);
   const [pdfPage, setPdfPage] = useState(null);
-  const [renderedScale, setRenderedScale] = useState(0);
 
   useEffect(() => {
     registerRef(shellRef.current);
@@ -196,27 +194,32 @@ function PageView({ doc, page, index, containerSize, registerRef }) {
     return () => {
       cancelled = true;
     };
+    // The fields are listed individually rather than depending on `page`:
+    // its identity changes on every rotation, which would needlessly
+    // re-fetch a page object that hasn't changed.
   }, [visible, doc.id, page.sourceIndex, page.source, page.width, page.height]);
 
   useEffect(() => {
     if (!pdfPage || pdfPage.isFake || !canvasRef.current) return;
-    let cancelled = false;
-    const renderTask = (async () => {
-      const viewport = pdfPage.getViewport({ scale, rotation: page.rotation });
-      const canvas = canvasRef.current;
-      canvas.width = Math.ceil(viewport.width);
-      canvas.height = Math.ceil(viewport.height);
-      const ctx = canvas.getContext('2d');
-      const task = pdfPage.render({ canvasContext: ctx, viewport });
-      try {
-        await task.promise;
-        if (!cancelled) setRenderedScale(scale);
-      } catch {
-        /* render was cancelled by a newer one - fine */
-      }
-    })();
+    // Render at the display's real pixel density, not CSS pixels: on a
+    // HiDPI screen (or Windows' near-universal 125/150% scaling) a canvas
+    // backing store sized in CSS pixels gets upscaled by the compositor,
+    // which is exactly why PDF text looks soft in a lot of viewers.
+    const dpr = Math.min(window.devicePixelRatio || 1, 3);
+    const viewport = pdfPage.getViewport({ scale: scale * dpr, rotation: page.rotation });
+    const canvas = canvasRef.current;
+    canvas.width = Math.ceil(viewport.width);
+    canvas.height = Math.ceil(viewport.height);
+    const task = pdfPage.render({ canvasContext: canvas.getContext('2d'), viewport });
+    task.promise.catch(() => {
+      /* superseded by a newer render - see the cleanup below */
+    });
     return () => {
-      cancelled = true;
+      // Actually cancel, don't just ignore the result. pdf.js refuses to
+      // run two renders against one canvas ("Cannot use the same canvas
+      // during multiple render operations"), so zooming faster than a page
+      // renders used to leave it blank or half-painted.
+      task.cancel();
     };
   }, [pdfPage, scale, page.rotation]);
 

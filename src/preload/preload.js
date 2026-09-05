@@ -21,12 +21,26 @@ contextBridge.exposeInMainWorld('pdfEditor', {
 
   getAppVersion: () => ipcRenderer.invoke('app:getVersion'),
 
+  writeClipboardText: (text) => ipcRenderer.invoke('clipboard:writeText', text),
+
+  // Unsaved-changes guard: the renderer keeps main informed, main asks the
+  // renderer to confirm before letting the window actually close.
+  setHasUnsavedChanges: (value) => ipcRenderer.invoke('window:setHasUnsavedChanges', value),
+  onWindowCloseRequested: (callback) => {
+    const listener = () => callback();
+    ipcRenderer.on('window:closeRequested', listener);
+    return () => ipcRenderer.removeListener('window:closeRequested', listener);
+  },
+
   // Frame:false means the renderer draws its own title bar, so it needs
   // the window-management calls a native frame would normally provide.
   windowControls: {
     minimize: () => ipcRenderer.invoke('window:minimize'),
     maximizeToggle: () => ipcRenderer.invoke('window:maximizeToggle'),
     close: () => ipcRenderer.invoke('window:close'),
+    // Close without the unsaved-changes prompt - called only after the
+    // renderer has already asked the user.
+    forceClose: () => ipcRenderer.invoke('window:forceClose'),
     isMaximized: () => ipcRenderer.invoke('window:isMaximized'),
     onMaximizedChange: (callback) => {
       const listener = (_evt, isMaximized) => callback(isMaximized);

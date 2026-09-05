@@ -43,8 +43,39 @@ export default function PropertiesPanel() {
   const selection = doc.selection;
   const selected = selection ? (doc.annotations[selection.pageKey] || []).find((a) => a.id === selection.objectId) : null;
 
+  // Typing in a field or dragging a slider fires a change per keystroke /
+  // per pixel. Recording an undo step for each of those made undo useless
+  // (one press per character) and, worse, pushed real history off the end
+  // of the 60-entry stack. So a run of edits to the same property of the
+  // same object is one undo step: the snapshot is taken on the first
+  // change of the run, and the rest ride along.
+  const burstKey = useRef(null);
+  const shouldRecord = (key) => {
+    if (key == null) return true; // a discrete action - always its own step
+    if (burstKey.current === key) return false;
+    burstKey.current = key;
+    return true;
+  };
+  /** Ends the current run, so the next edit starts a fresh undo step.
+   * Wired to blur and pointerup - i.e. whenever an interaction finishes. */
+  const endBurst = () => {
+    burstKey.current = null;
+  };
+
+  /**
+   * @param patch  properties to change
+   * @param burst  a key identifying a continuous interaction (e.g.
+   *   'text'), or omitted for a one-shot change that always gets its own
+   *   undo step.
+   */
   const target = selected
-    ? { get: (k) => selected[k], set: (patch) => updateAnnotation(doc.id, selection.pageKey, selection.objectId, patch, { record: true }) }
+    ? {
+        get: (k) => selected[k],
+        set: (patch, burst) =>
+          updateAnnotation(doc.id, selection.pageKey, selection.objectId, patch, {
+            record: shouldRecord(burst === undefined ? null : `${selection.objectId}:${burst}`)
+          })
+      }
     : { get: (k) => doc.toolOptions[k], set: (patch) => setToolOptions(doc.id, patch) };
 
   const fontFamilyValue = selected ? (selected.fontId ? `custom:${selected.fontId}` : selected.fontFamily) : doc.toolOptions.fontId ? `custom:${doc.toolOptions.fontId}` : doc.toolOptions.fontFamily;
@@ -124,8 +155,16 @@ export default function PropertiesPanel() {
           <input
             type="number"
             className="field"
+            min="1"
+            max="400"
             value={target.get('fontSize')}
-            onChange={(e) => target.set({ fontSize: Number(e.target.value) })}
+            onChange={(e) => {
+              // An empty or nonsensical box would otherwise set size 0 and
+              // make the text silently disappear.
+              const n = Number(e.target.value);
+              if (Number.isFinite(n) && n > 0) target.set({ fontSize: Math.min(400, n) }, 'fontSize');
+            }}
+            onBlur={endBurst}
           />
 
           <span className="pp-section-label" style={{ marginTop: 4 }}>Color</span>
@@ -147,7 +186,7 @@ export default function PropertiesPanel() {
           {selected && (
             <>
               <span className="pp-section-label" style={{ marginTop: 4 }}>Text</span>
-              <textarea className="field" value={selected.text} onChange={(e) => target.set({ text: e.target.value })} />
+              <textarea className="field" value={selected.text} onChange={(e) => target.set({ text: e.target.value }, 'text')} onBlur={endBurst} />
             </>
           )}
         </div>
@@ -167,7 +206,9 @@ export default function PropertiesPanel() {
             min="1"
             max="30"
             value={target.get('strokeWidth')}
-            onChange={(e) => target.set({ strokeWidth: Number(e.target.value) })}
+            onChange={(e) => target.set({ strokeWidth: Number(e.target.value) }, 'strokeWidth')}
+            onPointerUp={endBurst}
+            onBlur={endBurst}
           />
         </div>
       )}
@@ -196,7 +237,9 @@ export default function PropertiesPanel() {
                 max="1"
                 step="0.05"
                 value={target.get('fillOpacity') ?? 0.3}
-                onChange={(e) => target.set({ fillOpacity: Number(e.target.value) })}
+                onChange={(e) => target.set({ fillOpacity: Number(e.target.value) }, 'fillOpacity')}
+                onPointerUp={endBurst}
+                onBlur={endBurst}
               />
             </>
           )}
@@ -223,7 +266,9 @@ export default function PropertiesPanel() {
                 max="0.9"
                 step="0.05"
                 value={selected.opacity ?? 0.4}
-                onChange={(e) => target.set({ opacity: Number(e.target.value) })}
+                onChange={(e) => target.set({ opacity: Number(e.target.value) }, 'opacity')}
+                onPointerUp={endBurst}
+                onBlur={endBurst}
               />
             </>
           )}
@@ -301,7 +346,7 @@ export default function PropertiesPanel() {
 
           <span className="pp-section-label" style={{ marginTop: 4 }}>Test value</span>
           {selected.fieldType === 'text' && (
-            <input className="field" value={selected.value || ''} onChange={(e) => target.set({ value: e.target.value })} />
+            <input className="field" value={selected.value || ''} onChange={(e) => target.set({ value: e.target.value }, 'value')} onBlur={endBurst} />
           )}
           {selected.fieldType === 'checkbox' && (
             <input type="checkbox" checked={!!selected.value} onChange={(e) => target.set({ value: e.target.checked })} />

@@ -29,7 +29,51 @@ export default function Dialogs({ dialog }) {
       {dialog.type === 'fontPicker' && <FontPickerDialog {...dialog.props} />}
       {dialog.type === 'googleFontPicker' && <GoogleFontDialog {...dialog.props} />}
       {dialog.type === 'about' && <AboutDialog />}
+      {dialog.type === 'confirmClose' && <ConfirmCloseDialog {...dialog.props} />}
     </div>
+  );
+}
+
+/**
+ * Last line of defence before edits are thrown away. Shown when closing a
+ * document (or the whole window) that still has unsaved changes - before
+ * this existed, both simply discarded the work with no warning at all.
+ */
+function ConfirmCloseDialog({ names, onSave, onDiscard }) {
+  const closeDialog = useStore((s) => s.closeDialog);
+  const [busy, setBusy] = useState(false);
+  const many = names.length > 1;
+
+  return (
+    <Modal title={many ? 'Unsaved changes' : `Unsaved changes in ${names[0]}`}>
+      <p className="hint">
+        {many
+          ? `${names.length} documents have edits that haven't been saved: ${names.join(', ')}.`
+          : 'This document has edits that have not been saved yet.'}
+      </p>
+      <div className="modal-actions">
+        <button className="btn" disabled={busy} onClick={closeDialog}>
+          Cancel
+        </button>
+        <button className="btn danger" disabled={busy} onClick={onDiscard}>
+          {many ? 'Discard all' : 'Discard changes'}
+        </button>
+        <button
+          className="btn primary"
+          disabled={busy}
+          onClick={async () => {
+            setBusy(true);
+            try {
+              await onSave();
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          {busy ? 'Saving...' : many ? 'Save all' : 'Save'}
+        </button>
+      </div>
+    </Modal>
   );
 }
 

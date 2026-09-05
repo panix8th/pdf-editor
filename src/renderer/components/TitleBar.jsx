@@ -9,11 +9,10 @@ import { IconMinus, IconRestore, IconClose } from './Icons.jsx';
  * normally provide these is turned off in main.js so the design's tab
  * strip can live in the same row as the app icon).
  */
-export default function TitleBar({ onOpen }) {
+export default function TitleBar({ onOpen, onCloseDocument }) {
   const order = useStore((s) => s.order);
   const documents = useStore((s) => s.documents);
   const activeId = useStore((s) => s.activeId);
-  const closeDocument = useStore((s) => s.closeDocument);
   const setActive = useStore((s) => s.setActive);
 
   const [isMaximized, setIsMaximized] = useState(false);
@@ -43,7 +42,8 @@ export default function TitleBar({ onOpen }) {
                 className="doctab-close"
                 onClick={(e) => {
                   e.stopPropagation();
-                  closeDocument(id);
+                  // Routed through App so unsaved edits get a prompt.
+                  onCloseDocument(id);
                 }}
               >
                 ×
